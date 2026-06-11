@@ -1,0 +1,141 @@
+# gh-copilot-config
+
+A [`gh` CLI extension](https://docs.github.com/en/github-cli/github-cli/creating-github-cli-extensions)
+to **save**, **restore**, and **create** named profiles of your GitHub Copilot
+customizations, including a one-command **clean** toggle that gives you a vanilla
+workspace with zero customizations.
+
+Copilot customizations are scattered across three surfaces. This tool manages all of
+them as a single declarative profile:
+
+| Surface | Location |
+|---|---|
+| **Copilot CLI** | `~/.copilot/` (instructions, skills, extensions, hooks, plugins, MCP, settings) |
+| **GitHub Copilot.app** (Tauri) | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json` |
+| **VS Code** (Code + Insiders) | `settings.json` (Copilot keys only), `mcp.json`, `prompts/` |
+
+See the official [customization cheat sheet](https://docs.github.com/en/copilot/reference/customization-cheat-sheet)
+for context on what each surface does.
+
+## Install
+
+```bash
+# from a clone
+gh extension install .
+
+# or, once published
+gh extension install austenstone/gh-copilot-config
+```
+
+It runs as `gh copilot-config <command>`.
+
+## Usage
+
+```text
+gh copilot-config <command> [args] [--dry-run] [--all]
+
+list                  List profiles (* = active)
+status                Show active profile and drift vs live
+save <name>           Snapshot current live config into profile <name>
+apply <name>          Apply profile <name> to live (alias: restore)
+clean                 Apply the empty 'clean' profile (alias: off)
+on [name]             Re-apply last non-clean profile (or <name>/default)
+new <name> [--from b] Create a profile (empty, or copied from <b>)
+diff [name]           Diff live config against profile (default: active)
+
+--dry-run             Print planned changes without touching disk
+--all                 Include assets flagged optional (e.g. keybindings)
+```
+
+### Toggle clean ↔ customized
+
+```bash
+gh copilot-config save default   # capture your current setup (one time)
+gh copilot-config clean          # wipe to vanilla Copilot
+gh copilot-config on             # restore your last non-clean profile
+```
+
+### Multiple setups
+
+```bash
+gh copilot-config new work --from default   # branch a new profile
+gh copilot-config save work                 # snapshot live into it
+gh copilot-config apply work                # switch to it
+```
+
+## How it works
+
+A declarative [`manifest.sh`](manifest.sh) maps each managed asset to a
+`{surface, live path, profile path, type}` record. Type is one of:
+
+- `file` — whole file (e.g. `mcp-config.json`)
+- `dir` — whole directory (e.g. `instructions/`, `prompts/`)
+- `json-keys` — a key subset merged/stripped from a shared file
+- `skill-list` — an explicit allowlist of *custom* skill dirs (shipped builtins
+  are never touched)
+
+Apply is uniform, which makes "clean" fall out for free: for each managed asset, if
+it exists in the target profile it is written to the live location; if it does **not**,
+it is removed from live. An empty profile therefore == vanilla Copilot.
+
+### VS Code settings are handled surgically
+
+`settings.json` is shared with all your editor config, so only Copilot keys
+(`github.copilot*`, `chat*`, `mcp*`) are extracted/merged/stripped. Your other
+editor settings stay put. The tool is JSONC-aware: **comments above your settings are
+preserved** on save and apply.
+
+> **Caveat:** a comment on the *same line* as a managed key's value
+> (e.g. `"chat.agent.enabled": true, // note`) is dropped. Comments on their own
+> line above a key (the common case) are preserved.
+
+## Where your profiles live
+
+The **tool** (this repo) and your **profile data** are deliberately decoupled. Profiles
+are your personal Copilot config, so they live **outside** this repo, by default at:
+
+```text
+~/.config/gh-copilot-config/profiles      # override with $CC_PROFILES
+```
+
+This means:
+
+- This repo stays **code-only** and safe to share or publish. No personal config rides along.
+- Your profiles survive `gh extension remove`, reinstalls, and `git clean` in the tool repo.
+- The profiles dir is a great spot for its own **private** git repo (dotfiles pattern) so you
+  get version history and an off-machine backup. It is git-init'd locally on first run; add a
+  **private** remote yourself if you want it backed up:
+
+  ```bash
+  cd "${CC_PROFILES:-$HOME/.config/gh-copilot-config/profiles}"
+  gh repo create <you>/copilot-profiles --private --source=. --push
+  ```
+
+> Keep any profiles remote **private** — profiles contain your instructions, skills, and
+> MCP config. (No live tokens are stored: MCP secrets are referenced via `${env:…}` /
+> `${input:…}` placeholders, never captured.)
+
+## Safety
+
+- **Auto-snapshot before every apply.** Live state is copied to
+  `<profiles>/_autosave/<timestamp>/` first, so nothing is ever lost.
+- **Secrets and runtime state are never backed up:** `mcp-oauth-config/` (OAuth
+  tokens), sessions, session-state, `*.db`, logs, chats, caches, workspaces, repos,
+  worktrees, and other volatile state are all excluded.
+- **`--dry-run`** prints planned writes/removals without touching disk.
+
+## Repo layout
+
+```text
+gh-copilot-config       # extension entrypoint (bash)
+manifest.sh             # declarative asset map
+lib/
+  common.sh             # save/apply/snapshot helpers
+  jsonc.mjs             # comment-preserving JSONC extract/apply (jsonc-parser)
+node_modules/           # vendored jsonc-parser (gh extensions have no install step)
+
+# profile DATA lives outside the repo (default ~/.config/gh-copilot-config/profiles):
+#   default/   your captured setup (cli/ app/ vscode/)
+#   clean/     empty -> applying it = vanilla
+#   _autosave/ safety snapshots (local only)
+```

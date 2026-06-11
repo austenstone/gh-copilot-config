@@ -1,0 +1,7 @@
+# Personal config data lives outside this repo now (default:
+# ~/.config/gh-copilot-config/profiles). Never track profiles here so the
+# tool repo stays code-only and safely shareable.
+/profiles/
+# noise
+.DS_Store
+*.local
