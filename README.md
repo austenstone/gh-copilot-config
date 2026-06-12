@@ -43,7 +43,7 @@ write/removal without changing a thing:
 $ gh copilot-config clean --dry-run
 [dry-run] autosnapshot live -> _autosave/20260612-071425
 [dry-run] drop cli-instructions (absent live)
-[dry-run] sync cli-skills allowlist
+[dry-run] write cli-skills/ -> /Users/you/.copilot/skills
 [dry-run] snapshot app-data-db (app/data.db)
 [dry-run] skip app-data-db (backup-only, never restored)
 ...
@@ -107,12 +107,15 @@ A declarative [`manifest.sh`](manifest.sh) maps each managed asset to a
 - `file` — whole file (e.g. `mcp-config.json`)
 - `dir` — whole directory (e.g. `instructions/`, `prompts/`)
 - `json-keys` — a key subset merged/stripped from a shared file
-- `skill-list` — an explicit allowlist of *custom* skill dirs (shipped builtins
-  are never touched)
 - `db-snapshot` — **backup-only** consistent copy of a live SQLite DB (e.g.
   `data.db`, which holds the GitHub app's scheduled automations/workflows). Captured
   on `save` via `VACUUM INTO`, but **never restored** on `apply` and never counted as
   drift, the live DB is install-global state the tool won't clobber.
+
+`~/.copilot/skills/` is backed up as a plain `dir`, so **all** user-scope skills are
+captured: ones you authored *and* the bundled Anthropic example skills (`docx`, `pptx`,
+`xlsx`, `expense-report`, etc.). The only skills the tool never sees are the 3 true
+built-ins compiled into the CLI binary, which never live on disk and so are never at risk.
 
 Apply is uniform, which makes "clean" fall out for free: for each managed asset, if
 it exists in the target profile it is written to the live location; if it does **not**,

@@ -75,9 +75,6 @@ cc_save_asset() {
         cc_do "drop ${R_NAME} (absent live)" rm -f "${prof}"
       fi
       ;;
-    skill-list)
-      cc_do "sync ${R_NAME} allowlist" _cc_save_skills "${R_LIVE}" "${prof}" "${R_EXTRA}"
-      ;;
     db-snapshot)
       if [[ -e "${R_LIVE}" ]]; then
         cc_do "snapshot ${R_NAME} (${R_PROFREL})" _cc_db_snapshot "${R_LIVE}" "${prof}"
@@ -119,22 +116,6 @@ _cc_extract() {
   fi
 }
 
-_cc_save_skills() {
-  local live="$1" prof="$2" allow="$3" s
-  mkdir -p "${prof}"
-  # remove any profile skill no longer in the allowlist or no longer live
-  for s in "${prof}"/*/; do
-    [[ -d "${s}" ]] || continue
-    s="$(basename "${s}")"
-    if [[ " ${allow} " != *" ${s} "* ]] || [[ ! -d "${live}/${s}" ]]; then
-      rm -rf "${prof:?}/${s}"
-    fi
-  done
-  for s in ${allow}; do
-    if [[ -d "${live}/${s}" ]]; then cc_copy_dir "${live}/${s}" "${prof}/${s}"; fi
-  done
-}
-
 # ---- APPLY: profile dir ($1) -> live ------------------------------------
 cc_apply_asset() {
   local pdir="$1" prof="$1/${R_PROFREL}"
@@ -166,26 +147,11 @@ cc_apply_asset() {
           node "${CC_DIR}/lib/jsonc.mjs" apply "${R_LIVE}" NONE "${R_EXTRA}"
       fi
       ;;
-    skill-list)
-      cc_do "apply ${R_NAME} allowlist -> ${R_LIVE}" _cc_apply_skills "${R_LIVE}" "${prof}" "${R_EXTRA}"
-      ;;
     db-snapshot)
       cc_do "skip ${R_NAME} (backup-only, never restored)" true
       ;;
     *) cc_die "unknown asset type: ${R_TYPE}" ;;
   esac
-}
-
-_cc_apply_skills() {
-  local live="$1" prof="$2" allow="$3" s
-  mkdir -p "${live}"
-  for s in ${allow}; do
-    if [[ -d "${prof}/${s}" ]]; then
-      cc_copy_dir "${prof}/${s}" "${live}/${s}"
-    elif [[ -d "${live}/${s}" ]]; then
-      rm -rf "${live:?}/${s}"
-    fi
-  done
 }
 
 # ---- iterate over manifest ----------------------------------------------

@@ -6,13 +6,12 @@
 #   name|type|surface|live|profile_rel|extra
 #
 #   name        stable id (for diff/status output)
-#   type        file | dir | json-keys | skill-list | db-snapshot
+#   type        file | dir | json-keys | db-snapshot
 #   surface     cli | app | vscode-code | vscode-insiders   (grouping only)
 #   live        absolute path of the live asset
 #   profile_rel path under profiles/<profile>/
 #   extra       type-specific:
 #                 json-keys  -> ERE matching managed top-level keys
-#                 skill-list -> space-separated allowlist of skill dir names
 #                 (suffix " optional" on any record = skipped unless --all;
 #                  optional assets are only WRITTEN, never deleted from live)
 #
@@ -32,16 +31,15 @@ CC_VSCODE_INS="${HOME}/Library/Application Support/Code - Insiders/User"
 # the user's editor config and is left untouched).
 CC_VSCODE_KEY_RE='^(github\.copilot|chat|mcp)'
 
-# Custom CLI skills we own. Builtin/shipped skills are intentionally excluded
-# so we never clobber them.
-CC_CLI_SKILLS='about-austen fgpat-deeplink gemini-image gemini-search github-media'
-
 # shellcheck disable=SC2034  # CC_* and MANIFEST are consumed by the entrypoint
 MANIFEST=(
   # --- Copilot CLI (~/.copilot) ---
   "cli-instructions|file|cli|${CC_COPILOT}/copilot-instructions.md|cli/copilot-instructions.md|"
   "cli-instructions-dir|dir|cli|${CC_COPILOT}/instructions|cli/instructions|"
-  "cli-skills|skill-list|cli|${CC_COPILOT}/skills|cli/skills|${CC_CLI_SKILLS}"
+  # All user-scope skills on disk (custom + bundled Anthropic example skills).
+  # The 3 true built-ins live inside the CLI binary, not on disk, so they are
+  # never captured or at risk here.
+  "cli-skills|dir|cli|${CC_COPILOT}/skills|cli/skills|"
   "cli-extensions|dir|cli|${CC_COPILOT}/extensions|cli/extensions|"
   "cli-hooks|dir|cli|${CC_COPILOT}/hooks|cli/hooks|"
   "cli-installed-plugins|dir|cli|${CC_COPILOT}/installed-plugins|cli/installed-plugins|"
