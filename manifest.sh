@@ -24,6 +24,7 @@
 
 # --- live roots ---
 CC_COPILOT="${HOME}/.copilot"
+CC_AGENTS="${HOME}/.agents"
 CC_VSCODE="${HOME}/Library/Application Support/Code/User"
 CC_VSCODE_INS="${HOME}/Library/Application Support/Code - Insiders/User"
 
@@ -46,6 +47,16 @@ MANIFEST=(
   "cli-mcp|file|cli|${CC_COPILOT}/mcp-config.json|cli/mcp-config.json|"
   "cli-settings|file|cli|${CC_COPILOT}/settings.json|cli/settings.json|"
   "cli-permissions|file|cli|${CC_COPILOT}/permissions-config.json|cli/permissions-config.json|"
+  # Personal custom agents (user-profile scope), if present.
+  "cli-agents|dir|cli|${CC_COPILOT}/agents|cli/agents|"
+
+  # --- Cross-tool personal agent config (~/.agents) ---
+  # The agent-skills spec also defines a tool-neutral personal location at
+  # ~/.agents/skills (used by `find-skills` and skills installed from GitHub
+  # repos, e.g. azure-postgres). .skill-lock.json records each skill's source
+  # for reinstall/provenance, so it is captured alongside the skills.
+  "agents-skills|dir|agents|${CC_AGENTS}/skills|agents/skills|"
+  "agents-skill-lock|file|agents|${CC_AGENTS}/.skill-lock.json|agents/.skill-lock.json|"
 
   # --- GitHub Copilot.app (Tauri) ---
   "app-settings|file|app|${CC_COPILOT}/m-settings.json|app/m-settings.json|"

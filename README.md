@@ -10,7 +10,8 @@ them as a single declarative profile:
 
 | Surface | Location |
 |---|---|
-| **Copilot CLI** | `~/.copilot/` (instructions, skills, extensions, hooks, plugins, MCP, settings) |
+| **Copilot CLI** | `~/.copilot/` (instructions, skills, agents, extensions, hooks, plugins, MCP, settings) |
+| **Cross-tool agent config** | `~/.agents/` (tool-neutral personal skills + `.skill-lock.json` provenance) |
 | **GitHub Copilot.app** (Tauri) | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json`, and a safety snapshot of `~/.copilot/data.db` (scheduled automations/workflows, projects, workspaces) |
 | **VS Code** (Code + Insiders) | `settings.json` (Copilot keys only), `mcp.json`, `prompts/` |
 
@@ -112,10 +113,14 @@ A declarative [`manifest.sh`](manifest.sh) maps each managed asset to a
   on `save` via `VACUUM INTO`, but **never restored** on `apply` and never counted as
   drift, the live DB is install-global state the tool won't clobber.
 
-`~/.copilot/skills/` is backed up as a plain `dir`, so **all** user-scope skills are
-captured: ones you authored *and* the bundled Anthropic example skills (`docx`, `pptx`,
-`xlsx`, `expense-report`, etc.). The only skills the tool never sees are the 3 true
-built-ins compiled into the CLI binary, which never live on disk and so are never at risk.
+Skills live in **two** personal locations and both are captured as plain `dir`s:
+`~/.copilot/skills/` (Copilot CLI's own) and `~/.agents/skills/` (the tool-neutral
+location used by `find-skills` and skills installed from GitHub repos). So **all**
+user-scope skills are backed up: ones you authored, the bundled Anthropic example skills
+(`docx`, `pptx`, `xlsx`, `expense-report`, etc.), and externally-installed ones. The
+`~/.agents/.skill-lock.json` provenance file rides along so installed skills can be traced
+back to their source. The only skills the tool never sees are the 3 true built-ins compiled
+into the CLI binary, which never live on disk and so are never at risk.
 
 Apply is uniform, which makes "clean" fall out for free: for each managed asset, if
 it exists in the target profile it is written to the live location; if it does **not**,
