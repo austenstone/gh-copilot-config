@@ -24,13 +24,14 @@ mkdir -p "${CC_PROFILES}/clean"
 
 DRY_RUN=0
 INCLUDE_OPTIONAL=0
+FORCE=0
 
 usage() {
   cat <<'EOF'
 gh copilot-config — manage Copilot customization profiles
 
 USAGE
-  gh copilot-config <command> [args] [--dry-run] [--all]
+  gh copilot-config <command> [args] [--dry-run] [--all] [--force]
 
 COMMANDS
   list                       List profiles (* = active)
@@ -45,8 +46,11 @@ COMMANDS
 FLAGS
   --dry-run                  Print planned changes without touching disk
   --all                      Include assets flagged optional (e.g. keybindings)
+  --force, -y                Skip confirmation prompts (e.g. overwriting a profile)
 
 NOTES
+  • Saving onto an existing profile asks first; pass --force to overwrite,
+    and in a non-interactive shell it refuses unless --force is given.
   • Every apply first auto-snapshots live -> profiles/_autosave/<timestamp>.
   • OAuth tokens, sessions, logs, caches and other runtime state are never touched.
   • VS Code: only Copilot keys (github.copilot*, chat*, mcp*) are managed;
@@ -86,6 +90,10 @@ cmd_save() {
   local name="${1:-}"
   [[ -n "${name}" ]] || cc_die "save: need a profile name"
   [[ "${name}" == _* ]] && cc_die "save: names starting with _ are reserved"
+  if cc_profile_exists "${name}"; then
+    cc_confirm "save: profile '${name}' already exists, overwrite it?" \
+      || cc_die "save aborted (profile '${name}' left unchanged)."
+  fi
   local dir; dir="$(cc_profile_dir "${name}")"
   cc_do "create profile dir ${name}" mkdir -p "${dir}"
   cc_each save "${dir}"
@@ -197,6 +205,7 @@ main() {
     case "$1" in
       --dry-run) DRY_RUN=1; shift ;;
       --all) INCLUDE_OPTIONAL=1; shift ;;
+      --force|-y|--yes) FORCE=1; shift ;;
       -h|--help|help) usage; exit 0 ;;
       *) args+=("$1"); shift ;;
     esac

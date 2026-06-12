@@ -215,6 +215,20 @@ cc_set_active()  {
 cc_profile_dir() { printf '%s/%s' "${CC_PROFILES}" "$1"; }
 cc_profile_exists() { [[ -d "$(cc_profile_dir "$1")" ]]; }
 
+# Prompt for y/N confirmation before a destructive action. Bypassed by FORCE=1
+# and by dry-run (nothing is written). In a non-interactive shell it refuses
+# rather than silently proceeding, so automation can't clobber a profile.
+cc_confirm() {
+  local prompt="$1" ans
+  [[ "${DRY_RUN}" == "1" || "${FORCE:-0}" == "1" ]] && return 0
+  if [[ ! -t 0 ]]; then
+    cc_die "${prompt} Refusing without confirmation (re-run with --force / -y)."
+  fi
+  printf '%s%s [y/N] %s' "${_C_YEL}" "${prompt}" "${_C_RST}" >&2
+  read -r ans
+  [[ "${ans}" =~ ^[Yy]([Ee][Ss])?$ ]]
+}
+
 cc_list_profiles() {
   local p
   for p in "${CC_PROFILES}"/*/; do

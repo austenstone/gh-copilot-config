@@ -121,6 +121,10 @@ This means:
 
 ## Safety
 
+- **Saving never silently overwrites a profile.** `save <name>` onto an existing
+  profile asks for confirmation first; pass `--force` (or `-y`) to overwrite. In a
+  non-interactive shell it refuses unless `--force` is given, so scripts and
+  automations can't clobber a profile by accident.
 - **Auto-snapshot before every apply.** Live state is copied to
   `<profiles>/_autosave/<timestamp>/` first, so nothing is ever lost.
 - **Automations are backed up, never auto-restored.** The GitHub app's scheduled
