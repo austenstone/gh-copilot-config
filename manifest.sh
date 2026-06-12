@@ -6,7 +6,7 @@
 #   name|type|surface|live|profile_rel|extra
 #
 #   name        stable id (for diff/status output)
-#   type        file | dir | json-keys | skill-list
+#   type        file | dir | json-keys | skill-list | db-snapshot
 #   surface     cli | app | vscode-code | vscode-insiders   (grouping only)
 #   live        absolute path of the live asset
 #   profile_rel path under profiles/<profile>/
@@ -15,6 +15,11 @@
 #                 skill-list -> space-separated allowlist of skill dir names
 #                 (suffix " optional" on any record = skipped unless --all;
 #                  optional assets are only WRITTEN, never deleted from live)
+#
+#   db-snapshot  backup-only. A consistent, WAL-checkpointed copy of a live
+#                SQLite DB is written into the profile on `save`, but it is
+#                NEVER restored on `apply` (the live DB is install-global state
+#                we won't clobber) and never reported as drift. Pure safety net.
 #
 # Paths may contain spaces (VS Code), so records are split on '|' only.
 
@@ -47,6 +52,10 @@ MANIFEST=(
   # --- GitHub Copilot.app (Tauri) ---
   "app-settings|file|app|${CC_COPILOT}/m-settings.json|app/m-settings.json|"
   "app-mcp|file|app|${CC_COPILOT}/m-mcp-servers.json|app/m-mcp-servers.json|"
+
+  # App + CLI shared SQLite DB: holds scheduled automations/workflows, projects,
+  # workspaces, settings, app_state. Backed up for safety, never restored.
+  "app-data-db|db-snapshot|app|${CC_COPILOT}/data.db|app/data.db|"
 
   # --- VS Code (stable) ---
   "code-settings|json-keys|vscode-code|${CC_VSCODE}/settings.json|vscode/code/settings.copilot.json|${CC_VSCODE_KEY_RE}"

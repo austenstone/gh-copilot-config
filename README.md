@@ -11,7 +11,7 @@ them as a single declarative profile:
 | Surface | Location |
 |---|---|
 | **Copilot CLI** | `~/.copilot/` (instructions, skills, extensions, hooks, plugins, MCP, settings) |
-| **GitHub Copilot.app** (Tauri) | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json` |
+| **GitHub Copilot.app** (Tauri) | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json`, and a safety snapshot of `~/.copilot/data.db` (scheduled automations/workflows, projects, workspaces) |
 | **VS Code** (Code + Insiders) | `settings.json` (Copilot keys only), `mcp.json`, `prompts/` |
 
 See the official [customization cheat sheet](https://docs.github.com/en/copilot/reference/customization-cheat-sheet)
@@ -73,6 +73,10 @@ A declarative [`manifest.sh`](manifest.sh) maps each managed asset to a
 - `json-keys` — a key subset merged/stripped from a shared file
 - `skill-list` — an explicit allowlist of *custom* skill dirs (shipped builtins
   are never touched)
+- `db-snapshot` — **backup-only** consistent copy of a live SQLite DB (e.g.
+  `data.db`, which holds the GitHub app's scheduled automations/workflows). Captured
+  on `save` via `VACUUM INTO`, but **never restored** on `apply` and never counted as
+  drift, the live DB is install-global state the tool won't clobber.
 
 Apply is uniform, which makes "clean" fall out for free: for each managed asset, if
 it exists in the target profile it is written to the live location; if it does **not**,
@@ -119,9 +123,14 @@ This means:
 
 - **Auto-snapshot before every apply.** Live state is copied to
   `<profiles>/_autosave/<timestamp>/` first, so nothing is ever lost.
-- **Secrets and runtime state are never backed up:** `mcp-oauth-config/` (OAuth
-  tokens), sessions, session-state, `*.db`, logs, chats, caches, workspaces, repos,
-  worktrees, and other volatile state are all excluded.
+- **Automations are backed up, never auto-restored.** The GitHub app's scheduled
+  workflows live in `~/.copilot/data.db`; that DB is snapshotted into the profile for
+  safety but is never written back on `apply` (so toggling profiles can't disrupt or
+  duplicate running automations). Restore by hand if you ever need to.
+- **Secrets and other runtime state are never backed up:** `mcp-oauth-config/` (OAuth
+  tokens), sessions, session-state, `session-store.db`, logs, chats, caches, workspaces,
+  repos, worktrees, and other volatile state are all excluded. (`data.db` is the one
+  DB captured, backup-only, for the automations it holds.)
 - **`--dry-run`** prints planned writes/removals without touching disk.
 
 ## Repo layout

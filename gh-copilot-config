@@ -148,11 +148,17 @@ cmd_diff() {
   local keep="${DRY_RUN}"; DRY_RUN=0
   cc_each save "${tmp}"
   DRY_RUN="${keep}"
+  # db-snapshot assets are backup-only and the live DB mutates constantly, so a
+  # saved snapshot can never byte-match a fresh one. Always exclude them.
+  local -a ex=(--exclude '.keep')
+  local rec
+  for rec in "${MANIFEST[@]}"; do
+    cc_parse "${rec}"
+    [[ "${R_TYPE}" == "db-snapshot" ]] && ex+=(--exclude "$(basename "${R_PROFREL}")")
+  done
   # Without --all the live snapshot skips optional assets, so exclude those
   # paths from the profile side too, otherwise diff falsely reports them gone.
-  local -a ex=(--exclude '.keep')
   if [[ "${INCLUDE_OPTIONAL}" != "1" ]]; then
-    local rec
     for rec in "${MANIFEST[@]}"; do
       cc_parse "${rec}"
       cc_is_optional && ex+=(--exclude "$(basename "${R_PROFREL}")")

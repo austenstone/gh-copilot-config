@@ -78,11 +78,33 @@ cc_save_asset() {
     skill-list)
       cc_do "sync ${R_NAME} allowlist" _cc_save_skills "${R_LIVE}" "${prof}" "${R_EXTRA}"
       ;;
+    db-snapshot)
+      if [[ -e "${R_LIVE}" ]]; then
+        cc_do "snapshot ${R_NAME} (${R_PROFREL})" _cc_db_snapshot "${R_LIVE}" "${prof}"
+      else
+        cc_do "drop ${R_NAME} (absent live)" rm -f "${prof}"
+      fi
+      ;;
     *) cc_die "unknown asset type: ${R_TYPE}" ;;
   esac
 }
 
 _cc_cp_file() { mkdir -p "$(dirname "$2")"; cp -p "$1" "$2"; }
+
+# Consistent, single-file snapshot of a live SQLite DB. `VACUUM INTO` reads a
+# coherent transaction even while the app holds the DB open, and writes one
+# standalone file with no -wal/-shm sidecars. Falls back to a plain copy only
+# if sqlite3 is unavailable.
+_cc_db_snapshot() {
+  local src="$1" dest="$2"
+  mkdir -p "$(dirname "${dest}")"
+  if command -v sqlite3 >/dev/null 2>&1; then
+    rm -f "${dest}" "${dest}-wal" "${dest}-shm"
+    sqlite3 "${src}" "VACUUM INTO '${dest}'"
+  else
+    cp -p "${src}" "${dest}"
+  fi
+}
 
 # Extract managed keys to profile; if none, represent as absent (no file).
 _cc_extract() {
@@ -146,6 +168,9 @@ cc_apply_asset() {
       ;;
     skill-list)
       cc_do "apply ${R_NAME} allowlist -> ${R_LIVE}" _cc_apply_skills "${R_LIVE}" "${prof}" "${R_EXTRA}"
+      ;;
+    db-snapshot)
+      cc_do "skip ${R_NAME} (backup-only, never restored)" true
       ;;
     *) cc_die "unknown asset type: ${R_TYPE}" ;;
   esac
