@@ -6,8 +6,8 @@
 #   name|type|surface|live|profile_rel|extra
 #
 #   name        stable id (for diff/status output)
-#   type        file | dir | json-keys | db-snapshot
-#   surface     cli | app | vscode-code | vscode-insiders   (grouping only)
+#   type        file | dir | json-keys | db-snapshot | history
+#   surface     cli | app | vscode-code | vscode-insiders | history  (grouping)
 #   live        absolute path of the live asset
 #   profile_rel path under profiles/<profile>/
 #   extra       type-specific:
@@ -19,6 +19,16 @@
 #                SQLite DB is written into the profile on `save`, but it is
 #                NEVER restored on `apply` (the live DB is install-global state
 #                we won't clobber) and never reported as drift. Pure safety net.
+#
+#   history      OPT-IN, heavy. The GitHub app / CLI session history (session
+#                DBs + on-disk per-session state, ~hundreds of MB). Skipped
+#                entirely unless --with-history is passed, and never counted as
+#                drift. With --with-history: `save` makes a full copy into the
+#                profile; `apply <p>` restores it (replaces live); `clean`
+#                REMOVES it from live so the app recreates an empty set on next
+#                launch. Whole-file/dir copy, no in-place DB surgery. Because
+#                the app holds these DBs open, history writes require the app
+#                and Copilot CLI to be quit first (enforced via a lock check).
 #
 # Paths may contain spaces (VS Code), so records are split on '|' only.
 
@@ -77,4 +87,14 @@ MANIFEST=(
   "ins-mcp|file|vscode-insiders|${CC_VSCODE_INS}/mcp.json|vscode/code-insiders/mcp.json|"
   "ins-prompts|dir|vscode-insiders|${CC_VSCODE_INS}/prompts|vscode/code-insiders/prompts|"
   "ins-keybindings|file|vscode-insiders|${CC_VSCODE_INS}/keybindings.json|vscode/code-insiders/keybindings.json|optional"
+
+  # --- Session history (OPT-IN: --with-history only; heavy, ~hundreds of MB) ---
+  # Full backup of the GitHub app / Copilot CLI session history. On clean these
+  # are removed so the app recreates an empty set; apply restores them. The app
+  # and CLI must be quit first (lock check enforces this). See the `history`
+  # type docs at the top of this file.
+  "hist-data-db|history|history|${CC_COPILOT}/data.db|history/data.db|"
+  "hist-session-store|history|history|${CC_COPILOT}/session-store.db|history/session-store.db|"
+  "hist-session-state|history|history|${CC_COPILOT}/session-state|history/session-state|"
+  "hist-chats|history|history|${CC_COPILOT}/chats|history/chats|"
 )

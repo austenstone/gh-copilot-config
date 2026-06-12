@@ -14,6 +14,7 @@ them as a single declarative profile:
 | **Cross-tool agent config** | `~/.agents/` (tool-neutral personal skills + `.skill-lock.json` provenance) |
 | **GitHub Copilot.app** (Tauri) | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json`, and a safety snapshot of `~/.copilot/data.db` (scheduled automations/workflows, projects, workspaces) |
 | **VS Code** (Code + Insiders) | `settings.json` (Copilot keys only), `mcp.json`, `prompts/` |
+| **Session history** (opt-in) | `session-state/`, `session-store.db`, `data.db`, `chats/` via `--with-history` |
 
 See the official [customization cheat sheet](https://docs.github.com/en/copilot/reference/customization-cheat-sheet)
 for context on what each surface does.
@@ -90,6 +91,7 @@ diff [name]           Diff live config against profile (default: active)
 
 --dry-run             Print planned changes without touching disk
 --all                 Include assets flagged optional (e.g. keybindings)
+--with-history        Also back up / restore / clear session history (heavy)
 ```
 
 ### Multiple setups
@@ -112,6 +114,9 @@ A declarative [`manifest.sh`](manifest.sh) maps each managed asset to a
   `data.db`, which holds the GitHub app's scheduled automations/workflows). Captured
   on `save` via `VACUUM INTO`, but **never restored** on `apply` and never counted as
   drift, the live DB is install-global state the tool won't clobber.
+- `history` — **opt-in** (`--with-history` only) full backup of the GitHub app /
+  Copilot CLI session history: `data.db`, `session-store.db`, `session-state/`
+  (~hundreds of MB), and `chats/`. See [Session history](#session-history) below.
 
 Skills live in **two** personal locations and both are captured as plain `dir`s:
 `~/.copilot/skills/` (Copilot CLI's own) and `~/.agents/skills/` (the tool-neutral
@@ -136,6 +141,35 @@ preserved** on save and apply.
 > **Caveat:** a comment on the *same line* as a managed key's value
 > (e.g. `"chat.agent.enabled": true, // note`) is dropped. Comments on their own
 > line above a key (the common case) are preserved.
+
+## Session history
+
+By default the tool **never touches your session history** (it is runtime state, and
+it is large). Pass `--with-history` to opt in. It covers the GitHub app + Copilot CLI
+history as a group: `~/.copilot/data.db`, `~/.copilot/session-store.db`,
+`~/.copilot/session-state/` (the per-session event logs, typically **hundreds of MB**),
+and `~/.copilot/chats/`.
+
+```bash
+gh copilot-config save default --with-history     # back history up into a profile
+gh copilot-config clean --with-history            # wipe live history -> fresh app
+gh copilot-config apply default --with-history     # restore the saved history
+```
+
+- **`save --with-history`** copies live history into the profile. DBs are captured via
+  `VACUUM INTO` (a single consistent file, no `-wal`/`-shm` sidecars), so it is safe to
+  run even while the app is open.
+- **`clean --with-history`** *deletes* live history so the app/CLI recreate an empty set
+  on next launch. This also clears `data.db` (workflows, projects), so it is a truly
+  fresh app, restore brings it all back.
+- **`apply <p> --with-history`** restores history only if profile `<p>` saved some;
+  a profile that never captured history leaves your live history alone.
+- **Destructive ops require the app + CLI to be quit.** The GitHub app and Copilot CLI
+  hold these DBs open, so `apply`/`clean --with-history` refuse to run while they are
+  detected open (a lock check via `lsof`). Quit both and re-run from a plain terminal;
+  `--force` overrides but is risky.
+- **Changes take effect on relaunch.** History is excluded from auto-snapshots (to keep
+  them small) and from `diff` (it mutates constantly).
 
 ## Where your profiles live
 
@@ -176,9 +210,10 @@ This means:
   safety but is never written back on `apply` (so toggling profiles can't disrupt or
   duplicate running automations). Restore by hand if you ever need to.
 - **Secrets and other runtime state are never backed up:** `mcp-oauth-config/` (OAuth
-  tokens), sessions, session-state, `session-store.db`, logs, chats, caches, workspaces,
-  repos, worktrees, and other volatile state are all excluded. (`data.db` is the one
-  DB captured, backup-only, for the automations it holds.)
+  tokens), logs, caches, workspaces, repos, worktrees, and other volatile state are all
+  excluded. (`data.db` is snapshotted backup-only for the automations it holds.) Session
+  history (`session-state/`, `session-store.db`, `chats/`, and `data.db` as a full copy)
+  is excluded **unless** you opt in with `--with-history`, see [Session history](#session-history).
 - **`--dry-run`** prints planned writes/removals without touching disk.
 
 ## Repo layout

@@ -24,6 +24,7 @@ mkdir -p "${CC_PROFILES}/clean"
 
 DRY_RUN=0
 INCLUDE_OPTIONAL=0
+INCLUDE_HISTORY=0
 FORCE=0
 
 usage() {
@@ -31,7 +32,7 @@ usage() {
 gh copilot-config — manage Copilot customization profiles
 
 USAGE
-  gh copilot-config <command> [args] [--dry-run] [--all] [--force]
+  gh copilot-config <command> [args] [--dry-run] [--all] [--force] [--with-history]
 
 COMMANDS
   list                       List profiles (* = active)
@@ -47,12 +48,18 @@ FLAGS
   --dry-run                  Print planned changes without touching disk
   --all                      Include assets flagged optional (e.g. keybindings)
   --force, -y                Skip confirmation prompts (e.g. overwriting a profile)
+  --with-history             Also back up / restore / clear GitHub app + CLI
+                             session history (heavy, ~hundreds of MB). Requires
+                             the GitHub app and Copilot CLI to be quit first.
 
 NOTES
   • Saving onto an existing profile asks first; pass --force to overwrite,
     and in a non-interactive shell it refuses unless --force is given.
   • Every apply first auto-snapshots live -> profiles/_autosave/<timestamp>.
-  • OAuth tokens, sessions, logs, caches and other runtime state are never touched.
+  • OAuth tokens, logs, caches and other runtime state are never touched.
+  • Session history is NEVER touched without --with-history. With it, clean
+    removes history (app recreates empty) and apply restores it; changes take
+    effect after relaunching the app/CLI.
   • VS Code: only Copilot keys (github.copilot*, chat*, mcp*) are managed;
     your other editor settings and comments are preserved.
 EOF
@@ -60,14 +67,17 @@ EOF
 
 # ---- autosnapshot live state before a destructive apply ------------------
 cc_autosnapshot() {
-  local ts dir keep
+  local ts dir keep keep_hist
   ts="$(date +%Y%m%d-%H%M%S)"
   dir="${CC_PROFILES}/_autosave/${ts}"
   keep="${INCLUDE_OPTIONAL}"
+  keep_hist="${INCLUDE_HISTORY}"
   INCLUDE_OPTIONAL=1
+  INCLUDE_HISTORY=0   # never balloon autosnapshots with ~hundreds of MB of history
   cc_do "autosnapshot live -> _autosave/${ts}" mkdir -p "${dir}"
   cc_each save "${dir}"
   INCLUDE_OPTIONAL="${keep}"
+  INCLUDE_HISTORY="${keep_hist}"
   [[ "${DRY_RUN}" == "1" ]] || cc_info "↳ safety snapshot: profiles/_autosave/${ts}"
 }
 
@@ -104,10 +114,36 @@ cmd_apply() {
   local name="${1:-}"
   [[ -n "${name}" ]] || cc_die "apply: need a profile name"
   cc_profile_exists "${name}" || cc_die "apply: no such profile '${name}'"
+
+  # --with-history performs destructive whole-file ops on the session DBs the
+  # app/CLI hold open. Guard hard: refuse while they're running (unless forced),
+  # and confirm before clearing live history.
+  if [[ "${INCLUDE_HISTORY}" == "1" && "${DRY_RUN}" != "1" ]]; then
+    if cc_history_locked && [[ "${FORCE}" != "1" ]]; then
+      cc_die "session DBs are open. Quit the GitHub app and Copilot CLI, then re-run from a plain terminal (or pass --force to override — risky)."
+    fi
+    local prof_has_hist=0 rec
+    for rec in "${MANIFEST[@]}"; do
+      cc_parse "${rec}"
+      cc_is_history || continue
+      [[ -e "$(cc_profile_dir "${name}")/${R_PROFREL}" ]] && { prof_has_hist=1; break; }
+    done
+    if [[ "${prof_has_hist}" == "1" ]]; then
+      cc_confirm "apply --with-history: this REPLACES your live session history with profile '${name}'. Continue?" \
+        || cc_die "apply aborted (live history left unchanged)."
+    elif [[ "${name}" == "clean" ]]; then
+      cc_confirm "clean --with-history: this DELETES your live session history (the app will recreate an empty set). Continue?" \
+        || cc_die "clean aborted (live history left unchanged)."
+    fi
+  fi
+
+  [[ "${name}" == "clean" ]] && CC_APPLY_CLEAN=1 || CC_APPLY_CLEAN=0
   cc_autosnapshot
   cc_each apply "$(cc_profile_dir "${name}")"
   cc_set_active "${name}"
   cc_ok "applied profile '${name}'"
+  [[ "${INCLUDE_HISTORY}" == "1" ]] && cc_info "↳ relaunch the GitHub app / Copilot CLI for history changes to take effect."
+  return 0
 }
 
 cmd_clean() { cmd_apply clean; }
@@ -162,7 +198,8 @@ cmd_diff() {
   local rec
   for rec in "${MANIFEST[@]}"; do
     cc_parse "${rec}"
-    [[ "${R_TYPE}" == "db-snapshot" ]] && ex+=(--exclude "$(basename "${R_PROFREL}")")
+    { [[ "${R_TYPE}" == "db-snapshot" ]] || cc_is_history; } \
+      && ex+=(--exclude "$(basename "${R_PROFREL}")")
   done
   # Without --all the live snapshot skips optional assets, so exclude those
   # paths from the profile side too, otherwise diff falsely reports them gone.
@@ -205,6 +242,7 @@ main() {
     case "$1" in
       --dry-run) DRY_RUN=1; shift ;;
       --all) INCLUDE_OPTIONAL=1; shift ;;
+      --with-history) INCLUDE_HISTORY=1; shift ;;
       --force|-y|--yes) FORCE=1; shift ;;
       -h|--help|help) usage; exit 0 ;;
       *) args+=("$1"); shift ;;

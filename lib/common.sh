@@ -44,10 +44,16 @@ cc_parse() {
 }
 
 cc_is_optional() { [[ "${R_EXTRA}" == "optional" ]]; }
+cc_is_history()  { [[ "${R_TYPE}" == "history" ]]; }
 
 # Should this record be processed given INCLUDE_OPTIONAL?
 cc_skip_optional() {
   cc_is_optional && [[ "${INCLUDE_OPTIONAL}" != "1" ]]
+}
+
+# History assets are heavy and destructive; only touched with --with-history.
+cc_skip_history() {
+  cc_is_history && [[ "${INCLUDE_HISTORY:-0}" != "1" ]]
 }
 
 # ---- SAVE: live -> profile dir ($1) -------------------------------------
@@ -82,6 +88,17 @@ cc_save_asset() {
         cc_do "drop ${R_NAME} (absent live)" rm -f "${prof}"
       fi
       ;;
+    history)
+      # Full backup of a history store. Dirs -> rsync; SQLite DBs -> consistent
+      # single-file snapshot (safe even while the app holds the DB open).
+      if [[ -d "${R_LIVE}" ]]; then
+        cc_do "backup ${R_NAME}/ (${R_PROFREL})" cc_copy_dir "${R_LIVE}" "${prof}"
+      elif [[ -f "${R_LIVE}" ]]; then
+        cc_do "backup ${R_NAME} (${R_PROFREL})" _cc_db_snapshot "${R_LIVE}" "${prof}"
+      else
+        cc_do "drop ${R_NAME} (absent live)" rm -rf "${prof}"
+      fi
+      ;;
     *) cc_die "unknown asset type: ${R_TYPE}" ;;
   esac
 }
@@ -100,6 +117,26 @@ _cc_db_snapshot() {
     sqlite3 "${src}" "VACUUM INTO '${dest}'"
   else
     cp -p "${src}" "${dest}"
+  fi
+}
+
+# Restore a single-file DB snapshot to its live path, clearing any stale
+# -wal/-shm sidecars so the restored file is authoritative on next open.
+_cc_restore_db() {
+  local src="$1" dest="$2"
+  mkdir -p "$(dirname "${dest}")"
+  rm -f "${dest}-wal" "${dest}-shm"
+  cp -p "${src}" "${dest}"
+}
+
+# Remove a live history store (file + DB sidecars, or whole dir) so the app
+# recreates an empty one on next launch. Never touched unless --with-history.
+_cc_remove_history() {
+  local live="$1"
+  if [[ -d "${live}" ]]; then
+    rm -rf "${live:?}"
+  else
+    rm -f "${live}" "${live}-wal" "${live}-shm"
   fi
 }
 
@@ -150,6 +187,20 @@ cc_apply_asset() {
     db-snapshot)
       cc_do "skip ${R_NAME} (backup-only, never restored)" true
       ;;
+    history)
+      # Restore from profile if present; otherwise only remove from live when
+      # applying the empty 'clean' profile (so the app recreates a fresh set).
+      # A profile that simply never saved history leaves live history alone.
+      if [[ -d "${prof}" ]]; then
+        cc_do "restore ${R_NAME}/ -> ${R_LIVE}" cc_copy_dir "${prof}" "${R_LIVE}"
+      elif [[ -f "${prof}" ]]; then
+        cc_do "restore ${R_NAME} -> ${R_LIVE}" _cc_restore_db "${prof}" "${R_LIVE}"
+      elif [[ "${CC_APPLY_CLEAN:-0}" == "1" ]]; then
+        cc_do "clear ${R_NAME} (${R_LIVE}; app recreates empty)" _cc_remove_history "${R_LIVE}"
+      else
+        cc_do "keep ${R_NAME} (no history saved in profile)" true
+      fi
+      ;;
     *) cc_die "unknown asset type: ${R_TYPE}" ;;
   esac
 }
@@ -161,12 +212,26 @@ cc_each() {
   for rec in "${MANIFEST[@]}"; do
     cc_parse "${rec}"
     cc_skip_optional && continue
+    cc_skip_history && continue
     case "${action}" in
       save)  cc_save_asset "${pdir}" ;;
       apply) cc_apply_asset "${pdir}" ;;
       *) cc_die "cc_each: bad action ${action}" ;;
     esac
   done
+}
+
+# Are any live history DBs currently held open (GitHub app / Copilot CLI)?
+# Writing history while a process holds these open risks corruption, so we
+# refuse unless forced. Prints the holding command names.
+cc_history_locked() {
+  command -v lsof >/dev/null 2>&1 || return 1
+  local db holders=""
+  for db in "${CC_COPILOT}/data.db" "${CC_COPILOT}/session-store.db"; do
+    [[ -e "${db}" ]] || continue
+    holders+="$(lsof -t -- "${db}" 2>/dev/null)"
+  done
+  [[ -n "${holders}" ]]
 }
 
 # ---- profile bookkeeping ------------------------------------------------
