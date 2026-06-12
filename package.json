@@ -4,6 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Helper deps for the gh-copilot-config extension (JSONC-aware VS Code settings edits).",
+  "keywords": [
+    "gh-extension",
+    "github-cli",
+    "github-copilot",
+    "copilot",
+    "dotfiles",
+    "config",
+    "profiles"
+  ],
   "dependencies": {
     "jsonc-parser": "^3.3.1"
   }

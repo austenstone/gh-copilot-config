@@ -17,6 +17,50 @@ them as a single declarative profile:
 See the official [customization cheat sheet](https://docs.github.com/en/copilot/reference/customization-cheat-sheet)
 for context on what each surface does.
 
+## In action
+
+```console
+$ gh copilot-config save default     # capture your current setup, once
+saved live config -> profile 'default'
+
+$ gh copilot-config clean            # wipe to vanilla Copilot
+↳ safety snapshot: profiles/_autosave/20260612-071425
+applied profile 'clean'
+
+$ gh copilot-config list
+  default
+* clean
+last non-clean: default
+
+$ gh copilot-config on                # restore your last non-clean profile
+applied profile 'default'
+```
+
+Curious what an apply will touch? Add `--dry-run` to print every planned
+write/removal without changing a thing:
+
+```console
+$ gh copilot-config clean --dry-run
+[dry-run] autosnapshot live -> _autosave/20260612-071425
+[dry-run] drop cli-instructions (absent live)
+[dry-run] sync cli-skills allowlist
+[dry-run] snapshot app-data-db (app/data.db)
+[dry-run] skip app-data-db (backup-only, never restored)
+...
+```
+
+## Requirements
+
+The extension is plain Bash plus a couple of standard tools, so it runs on **macOS and
+Linux** (and WSL). You need:
+
+- [`gh`](https://cli.github.com/) — the GitHub CLI (host for the extension)
+- `bash` 4+ — the entrypoint and helpers
+- `node` — runs `lib/jsonc.mjs` for comment-preserving VS Code settings edits
+  (the `jsonc-parser` dep is vendored in `node_modules/`, so there is no install step)
+- `rsync` — directory sync for `dir` assets
+- `sqlite3` — `VACUUM INTO` snapshots of the Copilot app's `data.db`
+
 ## Install
 
 ```bash
@@ -45,14 +89,6 @@ diff [name]           Diff live config against profile (default: active)
 
 --dry-run             Print planned changes without touching disk
 --all                 Include assets flagged optional (e.g. keybindings)
-```
-
-### Toggle clean ↔ customized
-
-```bash
-gh copilot-config save default   # capture your current setup (one time)
-gh copilot-config clean          # wipe to vanilla Copilot
-gh copilot-config on             # restore your last non-clean profile
 ```
 
 ### Multiple setups
@@ -152,3 +188,18 @@ node_modules/           # vendored jsonc-parser (gh extensions have no install s
 #   clean/     empty -> applying it = vanilla
 #   _autosave/ safety snapshots (local only)
 ```
+
+## Contributing
+
+Issues and pull requests are welcome at
+[austenstone/gh-copilot-config](https://github.com/austenstone/gh-copilot-config).
+
+- The tool is the three shell files above plus `lib/jsonc.mjs`; profile data is never
+  part of the repo (see [Where your profiles live](#where-your-profiles-live)).
+- Use `--dry-run` while developing to see planned writes/removals without touching disk.
+- Adding support for a new asset is usually a one-line entry in
+  [`manifest.sh`](manifest.sh) — `apply`, `clean`, `diff`, and `save` all flow from it.
+
+## Version
+
+Current version: **0.1.0** (see [`package.json`](package.json)).
