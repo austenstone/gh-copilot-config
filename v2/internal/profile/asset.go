@@ -30,6 +30,9 @@ func (m *Manager) skip(a Asset) bool {
 	if a.Kind == KindHistory && !m.History {
 		return true
 	}
+	if a.Kind == KindDBSnapshot && !m.DBSnapshot {
+		return true
+	}
 	return false
 }
 
@@ -391,7 +394,7 @@ func syncDir(src, dst string) error {
 
 func ignored(rel string) bool {
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
-		if part == ".git" || part == ".DS_Store" {
+		if part == ".git" || part == ".DS_Store" || part == "node_modules" {
 			return true
 		}
 	}

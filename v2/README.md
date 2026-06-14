@@ -34,9 +34,10 @@ as a single declarative profile:
 |---|---|
 | **Copilot CLI** | `~/.copilot/` (instructions, skills, agents, extensions, hooks, plugins, MCP, settings) |
 | **Cross-tool agent config** | `~/.agents/` (skills + `.skill-lock.json`) |
-| **GitHub Copilot.app** | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json`, safety snapshot of `~/.copilot/data.db` |
+| **GitHub Copilot.app** | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json` |
 | **VS Code** (Code + Insiders) | `settings.json` (Copilot keys only), `mcp.json`, `prompts/`, `keybindings.json` |
 | **Session history** (opt-in) | history DBs/state via `--with-history` |
+| **Copilot databases** (opt-in) | backup-only snapshot of `~/.copilot/data.db` via `--with-db` |
 
 VS Code `settings.json` is edited by key: only `github.copilot*`, `chat*`, and
 `mcp*` keys are extracted/merged, and **all surrounding comments and unmanaged keys
@@ -58,8 +59,8 @@ tui   (ui)                launch the interactive TUI
 ```
 
 Global flags: `--dry-run` (print planned writes, change nothing), `--all` (include
-optional assets), `--with-history` (include session history), `--force`/`-y` (skip
-confirmation).
+optional assets), `--with-history` (include session history), `--with-db` (snapshot
+Copilot databases, backup-only), `--force`/`-y` (skip confirmation).
 
 Run a bare `gh copilot-config` in a TTY and you get the bubbletea TUI. Any
 non-interactive invocation (piped, scripted, `CC_NO_TUI=1`) stays pure CLI.
@@ -68,7 +69,7 @@ non-interactive invocation (piped, scripted, `CC_NO_TUI=1`) stays pure CLI.
 
 - **apply auto-snapshots first** into `_autosave/<timestamp>` before any destructive write.
 - **clean = the empty profile** = vanilla Copilot, nothing customized.
-- **DB snapshots are backup-only**: captured on save, never restored on apply.
+- **DB snapshots are opt-in and backup-only** (`--with-db`): captured on save, never restored on apply.
 - **history is opt-in** (`--with-history`) and refuses while the DB is locked.
 - **comments survive**: JSONC edits preserve every comment and unmanaged key.
 

@@ -14,12 +14,13 @@ var (
 	flagDryRun  bool
 	flagAll     bool
 	flagHistory bool
+	flagDB      bool
 	flagForce   bool
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "copilot-config",
-	Short:         "Save, restore, and toggle GitHub Copilot customization profiles",
+	Use:   "copilot-config",
+	Short: "Save, restore, and toggle GitHub Copilot customization profiles",
 	Long: "Manage named profiles of your GitHub Copilot customizations across the\n" +
 		"Copilot CLI, the Copilot app, and VS Code. The empty 'clean' profile resets\n" +
 		"to a vanilla setup. Run with no command in a terminal for the interactive TUI.",
@@ -45,6 +46,7 @@ func init() {
 	pf.BoolVar(&flagDryRun, "dry-run", false, "print planned changes without touching disk")
 	pf.BoolVar(&flagAll, "all", false, "include assets flagged optional (e.g. keybindings)")
 	pf.BoolVar(&flagHistory, "with-history", false, "also back up / restore / clear session history (heavy)")
+	pf.BoolVar(&flagDB, "with-db", false, "also snapshot Copilot databases (backup-only, heavy)")
 	pf.BoolVarP(&flagForce, "force", "y", false, "skip confirmation prompts")
 
 	rootCmd.AddCommand(listCmd, statusCmd, saveCmd, applyCmd, cleanCmd, onCmd, newCmd, rmCmd, diffCmd, tuiCmd)
@@ -59,6 +61,7 @@ func newManager() (*profile.Manager, error) {
 	m.DryRun = flagDryRun
 	m.Optional = flagAll
 	m.History = flagHistory
+	m.DBSnapshot = flagDB
 	return m, nil
 }
 
