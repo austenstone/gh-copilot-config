@@ -6,6 +6,7 @@ require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
+	github.com/dustin/go-humanize v1.0.1
 	github.com/spf13/cobra v1.10.2
 	github.com/tailscale/hujson v0.0.0-20260302212456-ecc657c15afd
 	golang.org/x/term v0.44.0

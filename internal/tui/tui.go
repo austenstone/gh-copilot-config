@@ -196,7 +196,7 @@ func newModel(mgr *profile.Manager) model {
 		{Title: "", Width: 2},
 		{Title: "PROFILE", Width: 18},
 		{Title: "CREATED", Width: 12},
-		{Title: "MODIFIED", Width: 12},
+		{Title: "MODIFIED", Width: 14},
 		{Title: "SIZE", Width: 8},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(10))
@@ -654,7 +654,7 @@ func rows(ps []profile.Profile) []table.Row {
 		if p.Active {
 			mark = "*"
 		}
-		out = append(out, table.Row{mark, p.Name, profile.FmtDate(p.Created), profile.FmtDate(p.Modified), profile.HumanSize(p.Size)})
+		out = append(out, table.Row{mark, p.Name, profile.FmtDate(p.Created), profile.FmtAgo(p.Modified), profile.HumanSize(p.Size)})
 	}
 	return out
 }

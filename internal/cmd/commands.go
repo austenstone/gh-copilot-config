@@ -48,7 +48,7 @@ var listCmd = &cobra.Command{
 			if p.Active {
 				mark = "* "
 			}
-			fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\n", mark, p.Name, profile.FmtDate(p.Created), profile.FmtDate(p.Modified), profile.HumanSize(p.Size))
+			fmt.Fprintf(tw, "%s%s\t%s\t%s\t%s\n", mark, p.Name, profile.FmtDate(p.Created), profile.FmtAgo(p.Modified), profile.HumanSize(p.Size))
 		}
 		tw.Flush()
 		if last := m.Last(); last != "" {

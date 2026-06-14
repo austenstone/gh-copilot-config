@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/dustin/go-humanize"
 )
 
 // Manager performs all profile operations against a profiles directory.
@@ -180,12 +182,29 @@ func (m *Manager) ProfileHasHistory(name string) bool {
 	return false
 }
 
-// FmtDate formats a timestamp as YYYY-MM-DD, or "-" if zero.
+// FmtDate renders a timestamp compactly: clock time if today, "Jan 2" if this
+// year, else "Jan 2 2006". Returns "-" for the zero time.
 func FmtDate(t time.Time) string {
 	if t.IsZero() {
 		return "-"
 	}
-	return t.Format("2006-01-02")
+	now := time.Now()
+	switch {
+	case t.Year() == now.Year() && t.YearDay() == now.YearDay():
+		return t.Format("3:04pm")
+	case t.Year() == now.Year():
+		return t.Format("Jan 2")
+	default:
+		return t.Format("Jan 2 2006")
+	}
+}
+
+// FmtAgo renders a timestamp as a relative "time ago" string, or "-" if zero.
+func FmtAgo(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return humanize.Time(t)
 }
 
 // HumanSize renders a byte count as a short human-readable string.
