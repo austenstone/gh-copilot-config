@@ -6,8 +6,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/austenstone/copilot-config/internal/profile"
-	"github.com/austenstone/copilot-config/internal/tui"
+	"github.com/austenstone/gh-copilot-config/internal/profile"
+	"github.com/austenstone/gh-copilot-config/internal/tui"
 	"github.com/spf13/cobra"
 )
 

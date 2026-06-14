@@ -3,7 +3,7 @@
 # tool repo stays code-only and safely shareable.
 /profiles/
 # compiled binary (built by script/build.sh) + release artifacts
-/gh-copilot-config
+gh-copilot-config
 /dist/
 # noise
 .DS_Store

@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/austenstone/copilot-config/internal/profile"
+	"github.com/austenstone/gh-copilot-config/internal/profile"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 )

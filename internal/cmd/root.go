@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/austenstone/copilot-config/internal/profile"
-	"github.com/austenstone/copilot-config/internal/tui"
+	"github.com/austenstone/gh-copilot-config/internal/profile"
+	"github.com/austenstone/gh-copilot-config/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -39,7 +39,10 @@ var rootCmd = &cobra.Command{
 }
 
 // Execute runs the root command.
-func Execute() error { return rootCmd.Execute() }
+func Execute(version string) error {
+	rootCmd.Version = version
+	return rootCmd.Execute()
+}
 
 func init() {
 	pf := rootCmd.PersistentFlags()
