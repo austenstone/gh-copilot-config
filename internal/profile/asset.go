@@ -134,21 +134,30 @@ func (m *Manager) Remove(name string) error {
 	return nil
 }
 
-// Diff returns a unified diff of live config against a profile; "" means no drift.
-func (m *Manager) Diff(name string) (string, error) {
+// diffRoots builds the two trees to compare: a fresh snapshot of live config
+// (liveRoot) and the saved profile (profileRoot), honoring the active scope. It
+// returns the roots, the file basenames to exclude, and a cleanup func.
+func (m *Manager) diffRoots(name string) (profileRoot, liveRoot string, excludes []string, cleanup func(), err error) {
 	if !m.Exists(name) {
-		return "", fmt.Errorf("no such profile %q", name)
+		return "", "", nil, func() {}, fmt.Errorf("no such profile %q", name)
 	}
+	var cleanups []string
+	cleanup = func() {
+		for _, d := range cleanups {
+			os.RemoveAll(d)
+		}
+	}
+
 	tmp, err := os.MkdirTemp("", "cc-diff-")
 	if err != nil {
-		return "", err
+		return "", "", nil, cleanup, err
 	}
-	defer os.RemoveAll(tmp)
+	cleanups = append(cleanups, tmp)
 
 	// db-snapshot/history never byte-match a fresh snapshot (and the db copy is
 	// huge and slow), so drop them from the snapshot entirely rather than copy
 	// then ignore. Optional assets are absent from live without --all.
-	excludes := []string{".keep"}
+	excludes = []string{".keep"}
 	snap := *m
 	snap.DryRun = false
 	snap.Out = io.Discard
@@ -161,19 +170,19 @@ func (m *Manager) Diff(name string) (string, error) {
 		snap.Assets = append(snap.Assets, a)
 	}
 	if err := snap.Save(tmp); err != nil {
-		return "", err
+		return "", "", nil, cleanup, err
 	}
 
 	// When scoped, compare against only the scoped slice of the saved profile so
 	// unrelated surfaces don't show up as spurious deletions. Mirror the same
 	// assets out of the profile into a temp tree and diff that instead.
-	profileRoot := m.ProfileDir(name)
+	profileRoot = m.ProfileDir(name)
 	if m.scoped() {
 		scopedRoot, err := os.MkdirTemp("", "cc-diff-prof-")
 		if err != nil {
-			return "", err
+			return "", "", nil, cleanup, err
 		}
-		defer os.RemoveAll(scopedRoot)
+		cleanups = append(cleanups, scopedRoot)
 		for _, a := range m.Assets {
 			if m.skip(a) {
 				continue
@@ -183,27 +192,96 @@ func (m *Manager) Diff(name string) (string, error) {
 			switch {
 			case isDir(src):
 				if err := syncDir(src, dst); err != nil {
-					return "", err
+					return "", "", nil, cleanup, err
 				}
 			case exists(src):
 				if err := copyFile(src, dst); err != nil {
-					return "", err
+					return "", "", nil, cleanup, err
 				}
 			}
 		}
 		profileRoot = scopedRoot
+	}
+	return profileRoot, tmp, excludes, cleanup, nil
+}
+
+// Diff returns a unified diff of live config against a profile; "" means no drift.
+func (m *Manager) Diff(name string) (string, error) {
+	profileRoot, liveRoot, excludes, cleanup, err := m.diffRoots(name)
+	defer cleanup()
+	if err != nil {
+		return "", err
 	}
 
 	args := []string{"-ruN"}
 	for _, e := range excludes {
 		args = append(args, "--exclude", e)
 	}
-	args = append(args, profileRoot, tmp)
+	args = append(args, profileRoot, liveRoot)
 	out, _ := exec.Command("diff", args...).CombinedOutput()
 	text := strings.ReplaceAll(string(out), profileRoot, "<profile:"+name+">")
 	text = strings.ReplaceAll(text, m.ProfileDir(name), "<profile:"+name+">")
-	text = strings.ReplaceAll(text, tmp, "<live>")
+	text = strings.ReplaceAll(text, liveRoot, "<live>")
 	return strings.TrimSpace(text), nil
+}
+
+// DiffChange is one entry in a diff summary: a path that was added, removed, or
+// modified in live config relative to the saved profile.
+type DiffChange struct {
+	Path string // path relative to the surface root
+	Kind string // "added" (only in live), "removed" (only in profile), "modified"
+}
+
+// DiffSummary lists which paths drifted without emitting full file contents. It
+// runs `diff -qr` (quiet, no -N) so single-sided entries stay classified as
+// added/removed instead of collapsing into modified. Cheap relative to Diff.
+func (m *Manager) DiffSummary(name string) ([]DiffChange, error) {
+	profileRoot, liveRoot, excludes, cleanup, err := m.diffRoots(name)
+	defer cleanup()
+	if err != nil {
+		return nil, err
+	}
+
+	args := []string{"-qr"}
+	for _, e := range excludes {
+		args = append(args, "--exclude", e)
+	}
+	args = append(args, profileRoot, liveRoot)
+	out, _ := exec.Command("diff", args...).CombinedOutput()
+
+	var changes []DiffChange
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "Files ") && strings.HasSuffix(line, " differ"):
+			// "Files <profileRoot>/x and <liveRoot>/x differ"
+			mid := strings.TrimSuffix(strings.TrimPrefix(line, "Files "), " differ")
+			parts := strings.SplitN(mid, " and ", 2)
+			rel := strings.TrimPrefix(strings.TrimPrefix(parts[len(parts)-1], liveRoot), "/")
+			changes = append(changes, DiffChange{Path: rel, Kind: "modified"})
+		case strings.HasPrefix(line, "Only in "):
+			// "Only in <dir>: <entry>"
+			rest := strings.TrimPrefix(line, "Only in ")
+			idx := strings.LastIndex(rest, ": ")
+			if idx < 0 {
+				continue
+			}
+			dir, entry := rest[:idx], rest[idx+2:]
+			joined := filepath.Join(dir, entry)
+			kind := "removed"
+			if strings.HasPrefix(joined, liveRoot) {
+				kind = "added"
+			}
+			full := strings.TrimPrefix(joined, profileRoot)
+			full = strings.TrimPrefix(full, liveRoot)
+			full = strings.TrimPrefix(full, "/")
+			changes = append(changes, DiffChange{Path: full, Kind: kind})
+		}
+	}
+	return changes, nil
 }
 
 // autosnapshot copies the current live state into _autosave/<timestamp> before a

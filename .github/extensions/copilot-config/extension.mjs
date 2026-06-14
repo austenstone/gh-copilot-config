@@ -132,6 +132,13 @@ async function handleApi(entry, path, body) {
 			}
 			return out;
 		}
+		case "/api/diff-summary": {
+			const name = body.name;
+			const args = name
+				? ["diff", name, "--summary", "--json"]
+				: ["diff", "--summary", "--json"];
+			return run(args, { json: true });
+		}
 		case "/api/apply":
 			requireName(body);
 			await run(["apply", body.name, "--force"]);

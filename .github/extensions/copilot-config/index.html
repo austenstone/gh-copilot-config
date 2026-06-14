@@ -278,6 +278,7 @@
 						<div class="spacer" style="flex:1"></div>
 						<button class="primary" id="btnApply">Apply</button>
 						<button id="btnDiff">Diff vs live</button>
+						<button id="btnDiffFull">Full patch</button>
 						<button class="danger" id="btnRm">Delete</button>
 					</div>
 					<div class="tabs">${tabs}</div>
@@ -286,13 +287,39 @@
 
 				$("btnApply").addEventListener("click", () => act("/api/apply", { name: selected }, `Apply "${selected}" to live config?`));
 				$("btnRm").addEventListener("click", () => act("/api/rm", { name: selected }, `Delete profile "${selected}"?`, () => { selected = null; }));
-				$("btnDiff").addEventListener("click", loadDiff);
+				$("btnDiff").addEventListener("click", loadDiffSummary);
+				$("btnDiffFull").addEventListener("click", loadDiff);
 				$("detail").querySelectorAll(".tab").forEach((el) => {
 					el.addEventListener("click", () => {
 						activeTab = el.dataset.tab;
 						renderDetail();
 					});
 				});
+			}
+
+			async function loadDiffSummary() {
+				const out = $("diffOut");
+				out.innerHTML = '<div class="muted" style="margin-top:10px">Loading summary…</div>';
+				try {
+					const d = await api("/api/diff-summary", { name: selected });
+					if (!d.drift) {
+						out.innerHTML = '<div class="muted" style="margin-top:10px">✓ No drift — live matches this profile.</div>';
+						return;
+					}
+					const c = d.counts || {};
+					const counts = `<div class="muted" style="margin:6px 0">
+						<span style="color:#3fb950">+${c.added || 0} added</span> ·
+						<span style="color:#d29922">~${c.modified || 0} modified</span> ·
+						<span style="color:#f85149">−${c.removed || 0} removed</span></div>`;
+					const sym = { added: "+", modified: "~", removed: "−" };
+					const col = { added: "#3fb950", modified: "#d29922", removed: "#f85149" };
+					const rows = (d.changes || [])
+						.map((ch) => `<div><span style="display:inline-block;width:1.2em;color:${col[ch.kind] || "#888"}">${sym[ch.kind] || "?"}</span>${escapeHtml(ch.path)}</div>`)
+						.join("");
+					out.innerHTML = `<h3 style="margin-top:14px">Changes vs live</h3>${counts}<div style="font-family:var(--mono,monospace);font-size:12px;line-height:1.6">${rows}</div>`;
+				} catch (e) {
+					out.innerHTML = `<div class="error">⚠ ${escapeHtml(e.message)}</div>`;
+				}
 			}
 
 			async function loadDiff() {

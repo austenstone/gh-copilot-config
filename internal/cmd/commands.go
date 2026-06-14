@@ -19,6 +19,7 @@ var (
 	saveSurface, saveFeature   string
 	applySurface, applyFeature string
 	diffSurface, diffFeature   string
+	diffSummaryFlag            bool
 )
 
 const (
@@ -37,6 +38,7 @@ func init() {
 	applyCmd.Flags().StringVar(&applyFeature, "feature", "", featureFlagHelp)
 	diffCmd.Flags().StringVar(&diffSurface, "surface", "", surfaceFlagHelp)
 	diffCmd.Flags().StringVar(&diffFeature, "feature", "", featureFlagHelp)
+	diffCmd.Flags().BoolVar(&diffSummaryFlag, "summary", false, "list changed paths only, not the full patch")
 }
 
 var listCmd = &cobra.Command{
@@ -235,6 +237,24 @@ var diffCmd = &cobra.Command{
 		}
 		if name == "" {
 			return fmt.Errorf("no active profile; pass a name")
+		}
+		if diffSummaryFlag {
+			changes, err := m.DiffSummary(name)
+			if err != nil {
+				return err
+			}
+			if flagJSON {
+				return emitJSON(newDiffSummaryJSON(name, changes))
+			}
+			if len(changes) == 0 {
+				fmt.Printf("no drift: live matches profile %q\n", name)
+				return nil
+			}
+			fmt.Printf("drift vs profile %q (%d changed):\n", name, len(changes))
+			for _, c := range changes {
+				fmt.Printf("  %-9s %s\n", c.Kind, c.Path)
+			}
+			return nil
 		}
 		out, err := m.Diff(name)
 		if err != nil {

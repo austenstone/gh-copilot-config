@@ -77,6 +77,30 @@ type diffJSON struct {
 	Patch string `json:"patch"`
 }
 
+// diffSummaryJSON lists which paths drifted, without the full patch body.
+type diffSummaryJSON struct {
+	Name    string           `json:"name"`
+	Drift   bool             `json:"drift"`
+	Counts  map[string]int   `json:"counts"`
+	Changes []diffChangeJSON `json:"changes"`
+}
+
+// diffChangeJSON is one changed path in a diff summary.
+type diffChangeJSON struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
+}
+
+func newDiffSummaryJSON(name string, changes []profile.DiffChange) diffSummaryJSON {
+	counts := map[string]int{"added": 0, "removed": 0, "modified": 0}
+	out := make([]diffChangeJSON, 0, len(changes))
+	for _, c := range changes {
+		counts[c.Kind]++
+		out = append(out, diffChangeJSON{Path: c.Path, Kind: c.Kind})
+	}
+	return diffSummaryJSON{Name: name, Drift: len(changes) > 0, Counts: counts, Changes: out}
+}
+
 // inspectJSON is a profile's inventory grouped surface→feature for browsing.
 type inspectJSON struct {
 	Name     string        `json:"name"`
