@@ -3,12 +3,32 @@ package tui
 import (
 	"os"
 	"testing"
+	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/austenstone/gh-copilot-config/internal/profile"
-	tea "github.com/charmbracelet/bubbletea"
+	zone "github.com/lrstanley/bubblezone/v2"
 )
 
-func TestClickInspectsRow(t *testing.T) {
+// renderAndLocate renders the model (which scans zone markers) and returns the
+// bounds of the named row once the zone worker has recorded them. Scan buffers
+// asynchronously, so we poll briefly.
+func renderAndLocate(t *testing.T, m model, name string) *zone.ZoneInfo {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		_ = m.View() // triggers zone.Scan over the rendered output
+		if z := zone.Get(name); z != nil && !z.IsZero() {
+			return z
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("zone %q never resolved", name)
+	return nil
+}
+
+func newReadyModel(t *testing.T) model {
+	t.Helper()
 	dir := t.TempDir()
 	os.Setenv("CC_PROFILES", dir)
 	mgr, err := profile.Open()
@@ -19,20 +39,21 @@ func TestClickInspectsRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	m := newModel(mgr)
+	zone.NewGlobal()
+	m := newModel(mgr, true)
 	m = drain(m, m.Init())
+	tm, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = tm.(model)
+	return drain(m, cmd)
+}
 
-	row := -1
-	for i, r := range m.tbl.Rows() {
-		if len(r) > 1 && r[1] == "alpha" {
-			row = i
-		}
-	}
-	if row < 0 {
-		t.Fatalf("alpha not in table; rows=%v", m.tbl.Rows())
-	}
+func TestClickInspectsRow(t *testing.T) {
+	zone.NewGlobal()
+	defer zone.Close()
+	m := newReadyModel(t)
 
-	click := tea.MouseMsg{Y: listDataTop + row, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}
+	z := renderAndLocate(t, m, "alpha")
+	click := tea.MouseClickMsg{X: z.StartX, Y: z.StartY, Button: tea.MouseLeft}
 	tm, cmd := m.Update(click)
 	m = tm.(model)
 	m = drain(m, cmd)
@@ -42,5 +63,20 @@ func TestClickInspectsRow(t *testing.T) {
 	}
 	if m.detailName != "alpha" {
 		t.Fatalf("inspected wrong profile: %q", m.detailName)
+	}
+}
+
+func TestHoverHighlightsRow(t *testing.T) {
+	zone.NewGlobal()
+	defer zone.Close()
+	m := newReadyModel(t)
+
+	z := renderAndLocate(t, m, "alpha")
+	motion := tea.MouseMotionMsg{X: z.StartX, Y: z.StartY}
+	tm, _ := m.Update(motion)
+	m = tm.(model)
+
+	if m.delegate.hovered != "alpha" {
+		t.Fatalf("hover did not highlight row: hovered=%q", m.delegate.hovered)
 	}
 }

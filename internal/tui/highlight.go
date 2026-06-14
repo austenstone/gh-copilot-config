@@ -4,15 +4,16 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	glamour "charm.land/glamour/v2"
+	lipgloss "charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
 )
 
 // render turns file content into preview-ready text: markdown goes through
@@ -123,7 +124,7 @@ func isMarkdown(filename string) bool {
 func renderMarkdown(content string, width int) (string, error) {
 	mdMu.Lock()
 	defer mdMu.Unlock()
-	r, err := cachedRenderer(width, lipgloss.HasDarkBackground())
+	r, err := cachedRenderer(width, lipgloss.HasDarkBackground(os.Stdin, os.Stdout))
 	if err != nil {
 		return "", err
 	}
@@ -153,7 +154,6 @@ func cachedRenderer(width int, dark bool) (*glamour.TermRenderer, error) {
 	}
 	r, err := glamour.NewTermRenderer(
 		glamour.WithStandardStyle(style),
-		glamour.WithColorProfile(lipgloss.ColorProfile()),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
@@ -169,7 +169,7 @@ func highlight(content, filename string) string {
 	lexer := chroma.Coalesce(lexerFor(filename, content))
 
 	style := styles.Get("github-dark")
-	if !lipgloss.HasDarkBackground() {
+	if !lipgloss.HasDarkBackground(os.Stdin, os.Stdout) {
 		style = styles.Get("github")
 	}
 	if style == nil {

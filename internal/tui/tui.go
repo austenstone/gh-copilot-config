@@ -4,27 +4,32 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"image/color"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	lipgloss "charm.land/lipgloss/v2"
 	"github.com/austenstone/gh-copilot-config/internal/profile"
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/table"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	zone "github.com/lrstanley/bubblezone/v2"
 )
 
 // Run launches the interactive TUI against a manager.
 func Run(m *profile.Manager) error {
-	_, err := tea.NewProgram(newModel(m), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	zone.NewGlobal()
+	defer zone.Close()
+	dark := lipgloss.HasDarkBackground(os.Stdin, os.Stdout)
+	_, err := tea.NewProgram(newModel(m, dark)).Run()
 	return err
 }
 
@@ -33,31 +38,79 @@ func Run(m *profile.Manager) error {
 // Semantic palette in GitHub's colors: a fixed GitHub blue accent (so it reads
 // the same regardless of the terminal's ANSI palette) with green=success,
 // red=failure, and a muted gray for secondary text, matching the gh CLI.
+// lipgloss v2 dropped AdaptiveColor, so the palette is resolved once at startup
+// from the detected background and held in package vars.
 var (
-	accent  = lipgloss.AdaptiveColor{Light: "#0969da", Dark: "#2f81f7"} // GitHub blue
-	dim     = lipgloss.AdaptiveColor{Light: "245", Dark: "242"}         // gh's muted gray
-	green   = lipgloss.Color("2")                                       // success
-	red     = lipgloss.Color("1")                                       // failure
-	selFg   = lipgloss.Color("15")                                      // white text on a colored bar
-	surface = lipgloss.AdaptiveColor{Light: "254", Dark: "236"}         // bar background
+	accent  color.Color
+	dim     color.Color
+	green   color.Color
+	red     color.Color
+	selFg   color.Color
+	surface color.Color
 
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(accent)
+	titleStyle  lipgloss.Style
+	subtleStyle lipgloss.Style
+	okStyle     lipgloss.Style
+	errStyle    lipgloss.Style
+	promptStyle lipgloss.Style
+	boxStyle    lipgloss.Style
+	ruleStyle   lipgloss.Style
+
+	statusBarStyle lipgloss.Style
+	modePillStyle  lipgloss.Style
+	okMarkStyle    lipgloss.Style
+	errMarkStyle   lipgloss.Style
+
+	tabStyle       lipgloss.Style
+	activeTabStyle lipgloss.Style
+
+	itemNameStyle      lipgloss.Style
+	itemDescStyle      lipgloss.Style
+	selItemNameStyle   lipgloss.Style
+	selItemDescStyle   lipgloss.Style
+	hoverItemNameStyle lipgloss.Style
+	hoverItemDescStyle lipgloss.Style
+)
+
+// setupStyles resolves the palette and builds every style for the detected
+// light/dark background. Called once at model creation.
+func setupStyles(dark bool) {
+	ld := lipgloss.LightDark(dark)
+	accent = ld(lipgloss.Color("#0969da"), lipgloss.Color("#2f81f7")) // GitHub blue
+	dim = ld(lipgloss.Color("245"), lipgloss.Color("242"))            // gh's muted gray
+	green = lipgloss.Color("2")                                       // success
+	red = lipgloss.Color("1")                                         // failure
+	selFg = lipgloss.Color("15")                                      // white text on a colored bar
+	surface = ld(lipgloss.Color("254"), lipgloss.Color("236"))        // bar background
+
+	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	subtleStyle = lipgloss.NewStyle().Foreground(dim)
-	okStyle     = lipgloss.NewStyle().Foreground(green)
-	errStyle    = lipgloss.NewStyle().Foreground(red)
+	okStyle = lipgloss.NewStyle().Foreground(green)
+	errStyle = lipgloss.NewStyle().Foreground(red)
 	promptStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
-	boxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent)
-	ruleStyle   = lipgloss.NewStyle().Foreground(dim)
+	boxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent)
+	ruleStyle = lipgloss.NewStyle().Foreground(dim)
 
 	statusBarStyle = lipgloss.NewStyle().Foreground(dim).Background(surface)
-	modePillStyle  = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent).Padding(0, 1)
-	selRowStyle    = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent)
-	okMarkStyle    = lipgloss.NewStyle().Foreground(green).Background(surface)
-	errMarkStyle   = lipgloss.NewStyle().Foreground(red).Background(surface)
+	modePillStyle = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent).Padding(0, 1)
+	okMarkStyle = lipgloss.NewStyle().Foreground(green).Background(surface)
+	errMarkStyle = lipgloss.NewStyle().Foreground(red).Background(surface)
 
-	tabStyle       = lipgloss.NewStyle().Foreground(dim).Padding(0, 1)
+	tabStyle = lipgloss.NewStyle().Foreground(dim).Padding(0, 1)
 	activeTabStyle = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent).Padding(0, 1)
-)
+
+	// Two-line list rows: an accent bar marks selection, a softer accent marks hover.
+	itemNameStyle = lipgloss.NewStyle().PaddingLeft(2)
+	itemDescStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(dim)
+	selItemNameStyle = lipgloss.NewStyle().
+		Border(lipgloss.ThickBorder(), false, false, false, true).
+		BorderForeground(accent).Foreground(accent).Bold(true).PaddingLeft(1)
+	selItemDescStyle = lipgloss.NewStyle().
+		Border(lipgloss.ThickBorder(), false, false, false, true).
+		BorderForeground(accent).Foreground(dim).PaddingLeft(1)
+	hoverItemNameStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(accent)
+	hoverItemDescStyle = lipgloss.NewStyle().PaddingLeft(2).Foreground(dim)
+}
 
 // catShort maps category labels to compact tab titles.
 var catShort = map[string]string{
@@ -92,19 +145,6 @@ func surfaceLabel(s profile.Surface) string {
 
 type keyMap struct {
 	Up, Down, Left, Right, PrevSurface, NextSurface, Inspect, Apply, On, Clean, Save, New, Diff, Delete, Edit, DB, Status, Refresh, Help, Quit key.Binding
-}
-
-func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Inspect, k.Apply, k.Save, k.Diff, k.Delete, k.Help, k.Quit}
-}
-
-func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Up, k.Down, k.Inspect, k.Apply},
-		{k.On, k.Clean, k.Save, k.New},
-		{k.Diff, k.Delete, k.DB, k.Status},
-		{k.Refresh, k.Help, k.Quit},
-	}
 }
 
 var keys = keyMap{
@@ -196,12 +236,12 @@ type actionMsg struct {
 }
 
 type model struct {
-	mgr   *profile.Manager
-	tbl   table.Model
-	help  help.Model
-	input textinput.Model
-	vp    viewport.Model
-	spin  spinner.Model
+	mgr      *profile.Manager
+	list     list.Model
+	delegate *profileDelegate
+	input    textinput.Model
+	vp       viewport.Model
+	spin     spinner.Model
 
 	mode           mode
 	pending        action // action awaiting input/confirm
@@ -214,6 +254,7 @@ type model struct {
 	width          int
 	height         int
 	loaded         bool
+	dark           bool
 
 	inv        profile.Inventory // categorized assets of the inspected profile
 	detailName string            // profile shown in modeDetail
@@ -223,29 +264,33 @@ type model struct {
 	lastWheel  time.Time         // throttles high-res scroll bursts to one step
 }
 
-func newModel(mgr *profile.Manager) model {
+func newModel(mgr *profile.Manager, dark bool) model {
+	setupStyles(dark)
+
 	ti := textinput.New()
 	ti.Placeholder = "profile name"
 	ti.CharLimit = 64
 
-	cols := []table.Column{
-		{Title: "", Width: 2},
-		{Title: "PROFILE", Width: 18},
-		{Title: "CREATED", Width: 12},
-		{Title: "MODIFIED", Width: 14},
-		{Title: "SIZE", Width: 8},
+	del := &profileDelegate{}
+	l := list.New(nil, del, 0, 0)
+	l.SetShowTitle(false)
+	l.SetShowStatusBar(false)
+	l.SetFilteringEnabled(true)
+	l.SetShowFilter(true)
+	l.SetShowHelp(true)
+	l.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{keys.Inspect, keys.Apply, keys.Save, keys.Diff, keys.Delete}
 	}
-	t := table.New(table.WithColumns(cols), table.WithFocused(true), table.WithHeight(10))
-	st := table.DefaultStyles()
-	st.Header = st.Header.BorderStyle(lipgloss.NormalBorder()).BorderForeground(dim).BorderBottom(true).Bold(true)
-	st.Selected = st.Selected.Foreground(selFg).Background(accent).Bold(true)
-	t.SetStyles(st)
+	l.AdditionalFullHelpKeys = func() []key.Binding {
+		return []key.Binding{
+			keys.Inspect, keys.Apply, keys.On, keys.Clean, keys.Save, keys.New,
+			keys.Diff, keys.Delete, keys.DB, keys.Status, keys.Refresh,
+		}
+	}
 
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(accent)
+	sp := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent)))
 
-	return model{mgr: mgr, tbl: t, input: ti, help: help.New(), vp: viewport.New(0, 0), spin: sp}
+	return model{mgr: mgr, list: l, delegate: del, input: ti, vp: viewport.New(), spin: sp, dark: dark}
 }
 
 // start marks an action in flight, sets a progress message, and kicks the
@@ -256,6 +301,65 @@ func (m model) start(status string, cmd tea.Cmd) (tea.Model, tea.Cmd) {
 }
 
 func (m model) Init() tea.Cmd { return tea.Batch(m.loadProfiles, m.spin.Tick) }
+
+// ---- list item + delegate -----------------------------------------------
+
+// profileItem adapts a profile to the list's two-line item interface.
+type profileItem struct{ p profile.Profile }
+
+func (i profileItem) Title() string { return i.p.Name }
+func (i profileItem) Description() string {
+	return fmt.Sprintf("created %s · modified %s · %s",
+		profile.FmtDate(i.p.Created), profile.FmtAgo(i.p.Modified), profile.HumanSize(i.p.Size))
+}
+func (i profileItem) FilterValue() string { return i.p.Name }
+
+// profileDelegate renders each profile as a two-line row (name + active marker,
+// then created·modified·size). It styles the selected and hovered rows
+// distinctly and wraps every row in a bubblezone mark so mouse hover and clicks
+// can be mapped back to a profile.
+type profileDelegate struct {
+	hovered string // name of the row the mouse is currently over
+}
+
+func (d *profileDelegate) Height() int                         { return 2 }
+func (d *profileDelegate) Spacing() int                        { return 1 }
+func (d *profileDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
+
+func (d *profileDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
+	it, ok := item.(profileItem)
+	if !ok {
+		return
+	}
+	width := max(1, m.Width())
+
+	var nameStyle, descStyle lipgloss.Style
+	switch {
+	case index == m.Index():
+		nameStyle, descStyle = selItemNameStyle, selItemDescStyle
+	case it.p.Name == d.hovered:
+		nameStyle, descStyle = hoverItemNameStyle, hoverItemDescStyle
+	default:
+		nameStyle, descStyle = itemNameStyle, itemDescStyle
+	}
+
+	name := truncate(it.p.Name, max(1, width-6))
+	if it.p.Active {
+		name += " " + okStyle.Render("●")
+	}
+	nameLine := nameStyle.Render(name)
+	descLine := descStyle.Render(truncate(it.Description(), max(1, width-3)))
+
+	fmt.Fprint(w, zone.Mark(it.p.Name, nameLine+"\n"+descLine))
+}
+
+func items(ps []profile.Profile) []list.Item {
+	out := make([]list.Item, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, profileItem{p})
+	}
+	return out
+}
 
 // ---- commands (side effects) --------------------------------------------
 
@@ -357,9 +461,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.help.Width = msg.Width
-		m.vp.Width = max(1, msg.Width-4)
-		m.vp.Height = max(1, msg.Height-5) // matches boxed() chrome
+		m.list.SetSize(msg.Width, max(1, msg.Height-4))
+		m.vp.SetWidth(max(1, msg.Width-4))
+		m.vp.SetHeight(max(1, msg.Height-5)) // matches boxed() chrome
 		return m, nil
 	case profilesMsg:
 		m.loaded = true
@@ -367,17 +471,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status, m.statusErr = msg.err.Error(), true
 			return m, nil
 		}
-		m.tbl.SetRows(rows(msg.profiles))
+		cmd := m.list.SetItems(items(msg.profiles))
 		if m.selectAfter != "" {
 			for i, p := range msg.profiles {
 				if p.Name == m.selectAfter {
-					m.tbl.SetCursor(i)
+					m.list.Select(i)
 					break
 				}
 			}
 			m.selectAfter = ""
 		}
-		return m, nil
+		return m, cmd
 	case actionMsg:
 		m.busy = false
 		if msg.err != nil {
@@ -419,17 +523,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.GotoTop()
 		m.mode = modePreview
 		return m, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.MouseMsg:
 		return m.handleMouse(msg)
 	}
 	var cmd tea.Cmd
-	m.tbl, cmd = m.tbl.Update(msg)
+	m.list, cmd = m.list.Update(msg)
 	return m, cmd
 }
 
-func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m, tea.Quit
 	}
@@ -548,13 +652,22 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// modeList
+	// modeList. While the filter input is open the list owns every key (so
+	// typing 'g', 'q', etc. filters instead of triggering app actions).
+	if m.list.SettingFilter() {
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(msg)
+		return m, cmd
+	}
+
 	switch {
-	case key.Matches(msg, keys.Quit) || msg.String() == "esc":
+	case key.Matches(msg, keys.Quit):
 		return m, tea.Quit
-	case key.Matches(msg, keys.Help):
-		m.help.ShowAll = !m.help.ShowAll
-		return m, nil
+	case msg.String() == "esc":
+		if m.list.FilterState() != list.Unfiltered {
+			break // let the list clear an applied filter instead of quitting
+		}
+		return m, tea.Quit
 	case key.Matches(msg, keys.Refresh):
 		m.status = ""
 		return m, m.loadProfiles
@@ -606,7 +719,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
-	m.tbl, cmd = m.tbl.Update(msg)
+	m.list, cmd = m.list.Update(msg)
 	return m, cmd
 }
 
@@ -618,22 +731,61 @@ func (m model) startInput(a action) (tea.Model, tea.Cmd) {
 	return m, textinput.Blink
 }
 
-// listDataTop is the screen row of the first profile row: title, rule, and a
-// blank line from heading(), then the table's header and its bottom border.
-const listDataTop = 5
-
 // wheelStep coalesces a burst of high-resolution scroll events (macOS momentum
 // scrolling on Retina displays fires many per gesture) into a single step.
 const wheelStep = 80 * time.Millisecond
 
-// handleMouse routes wheel scrolling and click-to-select. The profile table has
-// no native mouse support, so clicks are mapped to row cursor moves by hand.
+// handleMouse routes wheel scrolling, hover highlighting, and click-to-inspect.
+// Rows are located via bubblezone marks laid down during render.
 func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	wheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown
+	switch e := msg.(type) {
+	case tea.MouseWheelMsg:
+		return m.handleWheel(e)
+	case tea.MouseMotionMsg:
+		if m.mode == modeList {
+			m.delegate.hovered = m.rowAt(e)
+		}
+		return m, nil
+	case tea.MouseClickMsg:
+		if m.mode == modeList && e.Button == tea.MouseLeft {
+			if name := m.rowAt(e); name != "" {
+				m.selectByName(name)
+				return m.start("reading "+name+"…", m.inspect(name))
+			}
+		}
+		return m, nil
+	}
+	return m, nil
+}
 
-	// Discrete list/detail navigation advances one item per gesture; viewport
-	// content (preview/output) scrolls freely so reading long files stays smooth.
-	if wheel && (m.mode == modeList || m.mode == modeDetail) {
+// rowAt returns the profile name whose row contains the mouse event, or "".
+func (m model) rowAt(msg tea.MouseMsg) string {
+	for _, it := range m.list.VisibleItems() {
+		pi, ok := it.(profileItem)
+		if !ok {
+			continue
+		}
+		if zone.Get(pi.p.Name).InBounds(msg) {
+			return pi.p.Name
+		}
+	}
+	return ""
+}
+
+// selectByName moves the list cursor to the named profile, if visible.
+func (m *model) selectByName(name string) {
+	for i, it := range m.list.VisibleItems() {
+		if pi, ok := it.(profileItem); ok && pi.p.Name == name {
+			m.list.Select(i)
+			return
+		}
+	}
+}
+
+// handleWheel advances the list/detail one item per gesture (throttled), while
+// viewport content scrolls freely so reading long files stays smooth.
+func (m model) handleWheel(e tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
+	if m.mode == modeList || m.mode == modeDetail {
 		if time.Since(m.lastWheel) < wheelStep {
 			return m, nil
 		}
@@ -642,30 +794,20 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	switch m.mode {
 	case modeList:
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			m.tbl.MoveUp(1)
-			return m, nil
-		case tea.MouseButtonWheelDown:
-			m.tbl.MoveDown(1)
-			return m, nil
-		}
-		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-			if row := msg.Y - listDataTop; row >= 0 && row < len(m.tbl.Rows()) {
-				m.tbl.SetCursor(row)
-				if n := m.selected(); n != "" {
-					return m.start("reading "+n+"…", m.inspect(n))
-				}
-			}
+		switch e.Button {
+		case tea.MouseWheelUp:
+			m.list.CursorUp()
+		case tea.MouseWheelDown:
+			m.list.CursorDown()
 		}
 		return m, nil
 	case modeDetail:
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
+		switch e.Button {
+		case tea.MouseWheelUp:
 			if m.itemCursor > 0 {
 				m.itemCursor--
 			}
-		case tea.MouseButtonWheelDown:
+		case tea.MouseWheelDown:
 			if n := len(m.curItems()); n > 0 && m.itemCursor < n-1 {
 				m.itemCursor++
 			}
@@ -673,18 +815,17 @@ func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case modePreview, modeOutput:
 		var cmd tea.Cmd
-		m.vp, cmd = m.vp.Update(msg)
+		m.vp, cmd = m.vp.Update(e)
 		return m, cmd
 	}
 	return m, nil
 }
 
 func (m model) selected() string {
-	r := m.tbl.SelectedRow()
-	if len(r) < 2 {
-		return ""
+	if it, ok := m.list.SelectedItem().(profileItem); ok {
+		return it.p.Name
 	}
-	return r[1]
+	return ""
 }
 
 func (m model) surfaces() []profile.Surface { return m.inv.Surfaces() }
@@ -733,7 +874,17 @@ func (m model) curItem() (profile.InvItem, bool) {
 
 // ---- view ---------------------------------------------------------------
 
-func (m model) View() string {
+// View wraps the rendered screen in a bubblezone scan (so row marks resolve to
+// coordinates) and enables the alt screen and full mouse motion, which in
+// bubbletea v2 are set on the returned view rather than as program options.
+func (m model) View() tea.View {
+	v := tea.NewView(zone.Scan(m.render()))
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeAllMotion
+	return v
+}
+
+func (m model) render() string {
 	if !m.loaded {
 		return "\n  " + m.spin.View() + subtleStyle.Render("loading profiles…") + "\n"
 	}
@@ -767,9 +918,8 @@ func (m model) View() string {
 		return b.String()
 	}
 
-	b.WriteString(m.tbl.View() + "\n\n")
-	b.WriteString(m.statusline() + "\n")
-	b.WriteString(subtleStyle.Render("  " + m.help.View(keys)))
+	b.WriteString(m.list.View() + "\n")
+	b.WriteString(m.statusline())
 	return b.String()
 }
 
@@ -897,11 +1047,11 @@ func (m model) titleBar() string {
 // hardcoded vertical offsets to drift out of sync.
 func (m model) boxed(header, footer string) string {
 	const borderRows = 2 // boxStyle top + bottom
-	m.vp.Width = max(1, m.width-4)
-	m.vp.Height = max(1, m.height-lipgloss.Height(header)-lipgloss.Height(footer)-borderRows-1)
+	m.vp.SetWidth(max(1, m.width-4))
+	m.vp.SetHeight(max(1, m.height-lipgloss.Height(header)-lipgloss.Height(footer)-borderRows-1))
 	body := m.vp.View()
 	if m.previewLoading {
-		body = lipgloss.Place(m.vp.Width, m.vp.Height, lipgloss.Center, lipgloss.Center,
+		body = lipgloss.Place(m.vp.Width(), m.vp.Height(), lipgloss.Center, lipgloss.Center,
 			m.spin.View()+subtleStyle.Render(" rendering…"))
 	}
 	box := boxStyle.Width(max(1, m.width-2)).Render(body)
@@ -922,18 +1072,6 @@ func windowItems(items []profile.InvItem, cursor, height int) ([]profile.InvItem
 		offset = len(items) - height
 	}
 	return items[offset : offset+height], offset
-}
-
-func rows(ps []profile.Profile) []table.Row {
-	out := make([]table.Row, 0, len(ps))
-	for _, p := range ps {
-		mark := ""
-		if p.Active {
-			mark = "*"
-		}
-		out = append(out, table.Row{mark, p.Name, profile.FmtDate(p.Created), profile.FmtAgo(p.Modified), profile.HumanSize(p.Size)})
-	}
-	return out
 }
 
 func writeStatus(mgr *profile.Manager) error {
