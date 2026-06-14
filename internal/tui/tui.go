@@ -369,7 +369,7 @@ func (m model) loadProfiles() (msg tea.Msg) {
 			msg = profilesMsg{err: fmt.Errorf("panic: %v", r)}
 		}
 	}()
-	ps, err := m.mgr.Profiles("created", false)
+	ps, err := m.mgr.Profiles("modified", true)
 	return profilesMsg{profiles: ps, err: err}
 }
 
