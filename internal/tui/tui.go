@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // Run launches the interactive TUI against a manager.
@@ -29,11 +30,12 @@ func Run(m *profile.Manager) error {
 
 // Semantic palette (Catppuccin: Latte on light terminals, Mocha on dark).
 var (
-	accent = lipgloss.AdaptiveColor{Light: "#8839ef", Dark: "#cba6f7"} // mauve
-	dim    = lipgloss.AdaptiveColor{Light: "#8c8fa1", Dark: "#6c7086"} // overlay
-	green  = lipgloss.AdaptiveColor{Light: "#40a02b", Dark: "#a6e3a1"}
-	red    = lipgloss.AdaptiveColor{Light: "#d20f39", Dark: "#f38ba8"}
-	selFg  = lipgloss.AdaptiveColor{Light: "#eff1f5", Dark: "#1e1e2e"} // base, for text on accent
+	accent  = lipgloss.AdaptiveColor{Light: "#8839ef", Dark: "#cba6f7"} // mauve
+	dim     = lipgloss.AdaptiveColor{Light: "#8c8fa1", Dark: "#6c7086"} // overlay
+	green   = lipgloss.AdaptiveColor{Light: "#40a02b", Dark: "#a6e3a1"}
+	red     = lipgloss.AdaptiveColor{Light: "#d20f39", Dark: "#f38ba8"}
+	selFg   = lipgloss.AdaptiveColor{Light: "#eff1f5", Dark: "#1e1e2e"} // base, for text on accent
+	surface = lipgloss.AdaptiveColor{Light: "#ccd0da", Dark: "#313244"} // surface0, for bars
 
 	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	subtleStyle = lipgloss.NewStyle().Foreground(dim)
@@ -41,6 +43,13 @@ var (
 	errStyle    = lipgloss.NewStyle().Foreground(red)
 	promptStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	boxStyle    = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent)
+	ruleStyle   = lipgloss.NewStyle().Foreground(dim)
+
+	statusBarStyle = lipgloss.NewStyle().Foreground(dim).Background(surface)
+	modePillStyle  = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent).Padding(0, 1)
+	selRowStyle    = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent)
+	okMarkStyle    = lipgloss.NewStyle().Foreground(green).Background(surface)
+	errMarkStyle   = lipgloss.NewStyle().Foreground(red).Background(surface)
 
 	tabStyle       = lipgloss.NewStyle().Foreground(dim).Padding(0, 1)
 	activeTabStyle = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent).Padding(0, 1)
@@ -171,16 +180,17 @@ type model struct {
 	vp    viewport.Model
 	spin  spinner.Model
 
-	mode        mode
-	pending     action // action awaiting input/confirm
-	target      string // profile the pending action targets
-	selectAfter string // profile to highlight after the next reload
-	status      string
-	statusErr   bool
-	busy        bool // an async action is in flight
-	width       int
-	height      int
-	loaded      bool
+	mode           mode
+	pending        action // action awaiting input/confirm
+	target         string // profile the pending action targets
+	selectAfter    string // profile to highlight after the next reload
+	status         string
+	statusErr      bool
+	busy           bool // an async action is in flight
+	previewLoading bool // a preview is rendering off the UI loop
+	width          int
+	height         int
+	loaded         bool
 
 	inv        profile.Inventory // categorized assets of the inspected profile
 	detailName string            // profile shown in modeDetail
@@ -224,15 +234,27 @@ func (m model) Init() tea.Cmd { return tea.Batch(m.loadProfiles, m.spin.Tick) }
 
 // ---- commands (side effects) --------------------------------------------
 
-func (m model) loadProfiles() tea.Msg {
+func (m model) loadProfiles() (msg tea.Msg) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg = profilesMsg{err: fmt.Errorf("panic: %v", r)}
+		}
+	}()
 	ps, err := m.mgr.Profiles("created", false)
 	return profilesMsg{profiles: ps, err: err}
 }
 
 // action runs an engine operation off the UI loop, capturing its output.
+// Bubble Tea does not recover panics raised inside commands, so we guard here
+// to surface a crash as a status message rather than wrecking the terminal.
 func (m model) action(title string, fn func(mgr *profile.Manager) error) tea.Cmd {
 	mgr := *m.mgr
-	return func() tea.Msg {
+	return func() (msg tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				msg = actionMsg{title: title, err: fmt.Errorf("panic: %v", r)}
+			}
+		}()
 		var buf bytes.Buffer
 		mgr.Out = &buf
 		err := fn(&mgr)
@@ -249,9 +271,36 @@ type inventoryMsg struct {
 // inspect walks a saved profile and categorizes its assets.
 func (m model) inspect(name string) tea.Cmd {
 	mgr := *m.mgr
-	return func() tea.Msg {
+	return func() (msg tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				msg = inventoryMsg{name: name, err: fmt.Errorf("panic: %v", r)}
+			}
+		}()
 		inv, err := mgr.Inspect(name)
 		return inventoryMsg{name: name, inv: inv, err: err}
+	}
+}
+
+type previewMsg struct {
+	name    string
+	content string
+}
+
+// readFile loads a file's contents off the UI loop for preview, rendering
+// markdown with glamour and syntax-highlighting everything else.
+func readFile(name, path string, width int) tea.Cmd {
+	return func() (msg tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				msg = previewMsg{name: name, content: fmt.Sprintf("panic: %v", r)}
+			}
+		}()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return previewMsg{name: name, content: "cannot read " + path + ": " + err.Error()}
+		}
+		return previewMsg{name: name, content: render(string(b), path, width)}
 	}
 }
 
@@ -271,9 +320,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.tbl.SetHeight(max(5, msg.Height-9))
-		m.vp.Width, m.vp.Height = msg.Width-2, max(5, msg.Height-7)
 		m.help.Width = msg.Width
+		m.vp.Width = max(1, msg.Width-4)
+		m.vp.Height = max(1, msg.Height-5) // matches boxed() chrome
 		return m, nil
 	case profilesMsg:
 		m.loaded = true
@@ -306,7 +355,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.loadProfiles
 	case spinner.TickMsg:
-		if !m.busy && m.loaded {
+		if !m.busy && !m.previewLoading && m.loaded {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -325,6 +374,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.status, m.statusErr = msg.err.Error(), true
 		}
+		return m, nil
+	case previewMsg:
+		m.previewLoading = false
+		m.vp.SetContent(msg.content)
+		m.vp.GotoTop()
+		m.mode = modePreview
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -392,15 +447,8 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case key.Matches(msg, keys.Inspect):
 			if it, ok := m.curItem(); ok {
-				content := it.Name
-				if b, err := os.ReadFile(it.Path); err == nil {
-					content = string(b)
-				} else {
-					content = "cannot read " + it.Path + ": " + err.Error()
-				}
-				m.vp.SetContent(content)
-				m.vp.GotoTop()
-				m.mode = modePreview
+				m.mode, m.previewLoading = modePreview, true
+				return m, tea.Batch(readFile(it.Name, it.Path, max(1, m.width-4)), m.spin.Tick)
 			}
 			return m, nil
 		}
@@ -544,18 +592,16 @@ func (m model) View() string {
 	case modePreview:
 		return m.previewView()
 	}
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("  copilot-config") + subtleStyle.Render("  ·  Copilot customization profiles"))
-	if m.mgr.DBSnapshot {
-		b.WriteString(okStyle.Render("  [db]"))
-	}
-	b.WriteString("\n\n")
-
 	switch m.mode {
 	case modeOutput:
-		b.WriteString(boxStyle.Width(max(1, m.width-2)).Render(m.vp.View()))
-		b.WriteString("\n" + subtleStyle.Render("  ↑/↓ scroll · q/esc back"))
-		return b.String()
+		footer := subtleStyle.Render("  ↑/↓ scroll · q/esc back")
+		return m.boxed(m.titleBar(), footer)
+	}
+
+	var b strings.Builder
+	b.WriteString(m.heading("copilot-config", "Copilot customization profiles"))
+
+	switch m.mode {
 	case modeInput:
 		label := "Save current live config as:"
 		if m.pending == actNew {
@@ -570,26 +616,56 @@ func (m model) View() string {
 		return b.String()
 	}
 
-	b.WriteString(m.tbl.View() + "\n")
+	b.WriteString(m.tbl.View() + "\n\n")
+	b.WriteString(m.statusline() + "\n")
+	b.WriteString(subtleStyle.Render("  " + m.help.View(keys)))
+	return b.String()
+}
+
+// heading renders the app title with a subtitle and a full-width rule beneath.
+func (m model) heading(title, subtitle string) string {
+	line := titleStyle.Render("  "+title) + subtleStyle.Render("  ·  "+subtitle)
+	return line + "\n" + ruleStyle.Render(strings.Repeat("─", max(1, m.width))) + "\n\n"
+}
+
+// statusline renders a full-width bar with a mode pill and the latest status.
+func (m model) statusline() string {
+	pill := modePillStyle.Render("PROFILES")
+
+	mark, text := "", ""
 	switch {
 	case m.busy:
-		b.WriteString("  " + m.spin.View() + promptStyle.Render(m.status) + subtleStyle.Render("  (working…)") + "\n")
+		text = m.status + " …"
+	case m.statusErr:
+		mark, text = errMarkStyle.Render("✗"), m.status
 	case m.status != "":
-		style := okStyle
-		if m.statusErr {
-			style = errStyle
-		}
-		b.WriteString("  " + style.Render("• "+m.status) + "\n")
-	default:
-		b.WriteString("\n")
+		mark, text = okMarkStyle.Render("✓"), m.status
+	case m.mgr.DBSnapshot:
+		text = "db snapshot"
 	}
-	b.WriteString("  " + m.help.View(keys))
-	return b.String()
+
+	body := mark
+	if text != "" {
+		if mark != "" {
+			body += " "
+		}
+		body += text
+	}
+	seg := statusBarStyle.Width(max(1, m.width-lipgloss.Width(pill))).Render(" " + body)
+	return lipgloss.JoinHorizontal(lipgloss.Top, pill, seg)
+}
+
+// truncate clamps s to w display cells, adding an ellipsis when it overflows.
+func truncate(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	return ansi.Truncate(s, w, "…")
 }
 
 func (m model) detailView() string {
 	var b strings.Builder
-	b.WriteString(titleStyle.Render("  "+m.detailName) + subtleStyle.Render("  ·  profile detail") + "\n\n")
+	b.WriteString(m.heading(m.detailName, "profile detail"))
 
 	b.WriteString("  ")
 	for i, c := range profile.Categories {
@@ -600,18 +676,20 @@ func (m model) detailView() string {
 		}
 		b.WriteString(style.Render(label) + " ")
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n" + ruleStyle.Render(strings.Repeat("─", max(1, m.width))) + "\n\n")
 
 	items := m.curItems()
+	rowW := max(1, m.width-2)
 	if len(items) == 0 {
 		b.WriteString(subtleStyle.Render("  (none)") + "\n")
 	} else {
-		visible, offset := windowItems(items, m.itemCursor, max(1, m.height-9))
+		visible, offset := windowItems(items, m.itemCursor, max(1, m.height-11))
 		for i, it := range visible {
+			name := truncate(it.Name, rowW-4)
 			if offset+i == m.itemCursor {
-				b.WriteString("  " + promptStyle.Render("▸ "+it.Name) + "\n")
+				b.WriteString("  " + selRowStyle.Width(rowW-2).Render("▸ "+name) + "\n")
 			} else {
-				b.WriteString("    " + it.Name + "\n")
+				b.WriteString("    " + name + "\n")
 			}
 		}
 	}
@@ -621,15 +699,38 @@ func (m model) detailView() string {
 }
 
 func (m model) previewView() string {
-	var b strings.Builder
 	name := m.detailName
 	if it, ok := m.curItem(); ok {
 		name = it.Name
 	}
-	b.WriteString(titleStyle.Render("  "+name) + subtleStyle.Render("  ·  preview") + "\n\n")
-	b.WriteString(boxStyle.Width(max(1, m.width-2)).Render(m.vp.View()))
-	b.WriteString("\n" + subtleStyle.Render("  ↑/↓ scroll · q/esc back"))
-	return b.String()
+	header := titleStyle.Render("  "+name) + subtleStyle.Render("  ·  preview")
+	footer := subtleStyle.Render("  ↑/↓ scroll · q/esc back")
+	return m.boxed(header, footer)
+}
+
+// titleBar is the app header shared by the list and full-screen overlays.
+func (m model) titleBar() string {
+	bar := titleStyle.Render("  copilot-config") + subtleStyle.Render("  ·  Copilot customization profiles")
+	if m.mgr.DBSnapshot {
+		bar += okStyle.Render("  [db]")
+	}
+	return bar
+}
+
+// boxed composes a header, a bordered viewport, and a footer into a full-height
+// layout. The viewport is sized from the measured header/footer so there are no
+// hardcoded vertical offsets to drift out of sync.
+func (m model) boxed(header, footer string) string {
+	const borderRows = 2 // boxStyle top + bottom
+	m.vp.Width = max(1, m.width-4)
+	m.vp.Height = max(1, m.height-lipgloss.Height(header)-lipgloss.Height(footer)-borderRows-1)
+	body := m.vp.View()
+	if m.previewLoading {
+		body = lipgloss.Place(m.vp.Width, m.vp.Height, lipgloss.Center, lipgloss.Center,
+			m.spin.View()+subtleStyle.Render(" rendering…"))
+	}
+	box := boxStyle.Width(max(1, m.width-2)).Render(body)
+	return lipgloss.JoinVertical(lipgloss.Left, header, "", box, footer)
 }
 
 // windowItems returns the slice of items visible around the cursor, plus its
