@@ -23,12 +23,6 @@ func TestParseSurfaces(t *testing.T) {
 	if _, err := ParseSurfaces("bogus"); err == nil {
 		t.Fatal("expected error for unknown surface")
 	}
-	for _, tok := range []string{"dotcom", "github"} {
-		g, err := ParseSurfaces(tok)
-		if err != nil || !g[SurfaceDotCom] {
-			t.Fatalf("token %q should map to github.com, got %v %v", tok, g, err)
-		}
-	}
 }
 
 func TestParseFeatures(t *testing.T) {
@@ -46,13 +40,12 @@ func TestParseFeatures(t *testing.T) {
 
 func TestSurfaceForRel(t *testing.T) {
 	cases := map[string]Surface{
-		"cli/instructions/a.md":                        SurfaceCLI,
-		"agents/skills/x/SKILL.md":                     SurfaceAgents,
-		"app/m-mcp-servers.json":                       SurfaceApp,
-		"vscode/code/prompts/p.prompt.md":              SurfaceVSCode,
-		"vscode/code-insiders/mcp.json":                SurfaceInsiders, // insiders before code
-		"history/data.db":                              SurfaceHistory,
-		"dotcom/personal-instructions.instructions.md": SurfaceDotCom,
+		"cli/instructions/a.md":           SurfaceCLI,
+		"agents/skills/x/SKILL.md":        SurfaceAgents,
+		"app/m-mcp-servers.json":          SurfaceApp,
+		"vscode/code/prompts/p.prompt.md": SurfaceVSCode,
+		"vscode/code-insiders/mcp.json":   SurfaceInsiders, // insiders before code
+		"history/data.db":                 SurfaceHistory,
 	}
 	for rel, want := range cases {
 		if got := surfaceForRel(rel); got != want {
@@ -83,22 +76,6 @@ func TestScopedSkip(t *testing.T) {
 
 	if (&Manager{}).scoped() {
 		t.Error("unscoped manager should report scoped()=false")
-	}
-}
-
-func TestManifestHasDotCom(t *testing.T) {
-	var found Asset
-	for _, a := range Manifest() {
-		if a.Surface == SurfaceDotCom {
-			found = a
-			break
-		}
-	}
-	if found.Name == "" {
-		t.Fatal("expected a github.com asset in the manifest")
-	}
-	if found.Feature != CatInstructions || found.Kind != KindFile {
-		t.Errorf("github.com asset should be a file instruction, got %+v", found)
 	}
 }
 
