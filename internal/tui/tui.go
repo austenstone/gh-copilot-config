@@ -45,6 +45,7 @@ var (
 	dim     color.Color
 	green   color.Color
 	red     color.Color
+	yellow  color.Color
 	selFg   color.Color
 	surface color.Color
 
@@ -60,6 +61,8 @@ var (
 	modePillStyle  lipgloss.Style
 	okMarkStyle    lipgloss.Style
 	errMarkStyle   lipgloss.Style
+	warnStyle      lipgloss.Style
+	warnMarkStyle  lipgloss.Style
 
 	tabStyle       lipgloss.Style
 	activeTabStyle lipgloss.Style
@@ -80,6 +83,7 @@ func setupStyles(dark bool) {
 	dim = ld(lipgloss.Color("245"), lipgloss.Color("242"))            // gh's muted gray
 	green = lipgloss.Color("2")                                       // success
 	red = lipgloss.Color("1")                                         // failure
+	yellow = lipgloss.Color("3")                                      // drift / warning
 	selFg = lipgloss.Color("15")                                      // white text on a colored bar
 	surface = ld(lipgloss.Color("254"), lipgloss.Color("236"))        // bar background
 
@@ -95,6 +99,8 @@ func setupStyles(dark bool) {
 	modePillStyle = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent).Padding(0, 1)
 	okMarkStyle = lipgloss.NewStyle().Foreground(green).Background(surface)
 	errMarkStyle = lipgloss.NewStyle().Foreground(red).Background(surface)
+	warnStyle = lipgloss.NewStyle().Foreground(yellow)
+	warnMarkStyle = lipgloss.NewStyle().Foreground(yellow).Background(surface)
 
 	tabStyle = lipgloss.NewStyle().Foreground(dim).Padding(0, 1)
 	activeTabStyle = lipgloss.NewStyle().Bold(true).Foreground(selFg).Background(accent).Padding(0, 1)
@@ -144,7 +150,7 @@ func surfaceLabel(s profile.Surface) string {
 // ---- key bindings -------------------------------------------------------
 
 type keyMap struct {
-	Up, Down, Left, Right, PrevSurface, NextSurface, Inspect, Apply, On, Clean, Save, New, Diff, Delete, Edit, DB, Status, Refresh, Help, Quit key.Binding
+	Up, Down, Left, Right, PrevSurface, NextSurface, Inspect, Apply, On, Clean, Save, New, Diff, Delete, Edit, DB, History, Status, Refresh, Help, Quit key.Binding
 }
 
 var keys = keyMap{
@@ -164,6 +170,7 @@ var keys = keyMap{
 	Delete:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "delete")),
 	Edit:        key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "open in editor")),
 	DB:          key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "toggle db snapshots")),
+	History:     key.NewBinding(key.WithKeys("h"), key.WithHelp("h", "history")),
 	Status:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "status")),
 	Refresh:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
@@ -181,6 +188,8 @@ const (
 	modeConfirm
 	modeDetail
 	modePreview
+	modeHistory
+	modeSnapDiff
 )
 
 // action identifies a user-initiated operation awaiting input or confirmation.
@@ -262,6 +271,14 @@ type model struct {
 	tab        int               // active category tab within the surface
 	itemCursor int               // selected item within the active tab
 	lastWheel  time.Time         // throttles high-res scroll bursts to one step
+
+	snaps         []profile.Snapshot // autosave timeline, newest-first
+	snapDeltas    []profile.Delta    // per-snapshot change summary vs the prior snapshot
+	histCursor    int                // selected snapshot in modeHistory
+	snapDiffTitle string             // header shown in modeSnapDiff
+
+	driftState drift  // whether the live config still matches the active profile
+	driftName  string // the active profile the drift state describes
 }
 
 func newModel(mgr *profile.Manager, dark bool) model {
@@ -284,7 +301,7 @@ func newModel(mgr *profile.Manager, dark bool) model {
 	l.AdditionalFullHelpKeys = func() []key.Binding {
 		return []key.Binding{
 			keys.Inspect, keys.Apply, keys.On, keys.Clean, keys.Save, keys.New,
-			keys.Diff, keys.Delete, keys.DB, keys.Status, keys.Refresh,
+			keys.Diff, keys.Delete, keys.DB, keys.History, keys.Status, keys.Refresh,
 		}
 	}
 
@@ -319,7 +336,8 @@ func (i profileItem) FilterValue() string { return i.p.Name }
 // distinctly and wraps every row in a bubblezone mark so mouse hover and clicks
 // can be mapped back to a profile.
 type profileDelegate struct {
-	hovered string // name of the row the mouse is currently over
+	hovered     string // name of the row the mouse is currently over
+	activeDrift drift  // whether the active profile's live config has drifted
 }
 
 func (d *profileDelegate) Height() int                         { return 2 }
@@ -345,7 +363,14 @@ func (d *profileDelegate) Render(w io.Writer, m list.Model, index int, item list
 
 	name := truncate(it.p.Name, max(1, width-6))
 	if it.p.Active {
-		name += " " + okStyle.Render("●")
+		switch d.activeDrift {
+		case driftDrifted:
+			name += " " + warnStyle.Render("◐") // live has diverged from the saved profile
+		case driftChecking:
+			name += " " + subtleStyle.Render("●")
+		default:
+			name += " " + okStyle.Render("●")
+		}
 	}
 	nameLine := nameStyle.Render(name)
 	descLine := descStyle.Render(truncate(it.Description(), max(1, width-3)))
@@ -362,6 +387,42 @@ func items(ps []profile.Profile) []list.Item {
 }
 
 // ---- commands (side effects) --------------------------------------------
+
+// drift describes whether the live config still matches the active profile.
+// Only the active profile can drift, so at most one row carries this state.
+type drift int
+
+const (
+	driftUnknown drift = iota
+	driftChecking
+	driftSynced
+	driftDrifted
+)
+
+type driftMsg struct {
+	name    string
+	drifted bool
+	err     error
+}
+
+// checkDrift compares the live config against a saved profile off the UI loop.
+// Diff snapshots live and compares it to the profile, so this is the real "has
+// my config diverged since I applied it" check, not an mtime guess.
+func (m model) checkDrift(name string) tea.Cmd {
+	mgr := *m.mgr
+	return func() (msg tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				msg = driftMsg{name: name, err: fmt.Errorf("panic: %v", r)}
+			}
+		}()
+		out, err := mgr.Diff(name)
+		if err != nil {
+			return driftMsg{name: name, err: err}
+		}
+		return driftMsg{name: name, drifted: strings.TrimSpace(out) != ""}
+	}
+}
 
 func (m model) loadProfiles() (msg tea.Msg) {
 	defer func() {
@@ -481,6 +542,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.selectAfter = ""
 		}
+		// Kick a drift check for the active profile (the only one that can drift).
+		if active := m.mgr.Active(); active != "" && m.mgr.Exists(active) {
+			m.driftState, m.driftName = driftChecking, active
+			m.delegate.activeDrift = driftChecking
+			return m, tea.Batch(cmd, m.checkDrift(active))
+		}
+		m.driftState, m.driftName = driftUnknown, ""
+		m.delegate.activeDrift = driftUnknown
 		return m, cmd
 	case actionMsg:
 		m.busy = false
@@ -495,6 +564,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp.GotoTop()
 		}
 		return m, m.loadProfiles
+	case driftMsg:
+		if msg.name != m.mgr.Active() {
+			return m, nil // stale result for a profile that's no longer active
+		}
+		switch {
+		case msg.err != nil:
+			m.driftState = driftUnknown
+		case msg.drifted:
+			m.driftState = driftDrifted
+		default:
+			m.driftState = driftSynced
+		}
+		m.driftName = msg.name
+		m.delegate.activeDrift = m.driftState
+		return m, nil
 	case spinner.TickMsg:
 		if !m.busy && !m.previewLoading && m.loaded {
 			return m, nil
@@ -941,6 +1025,10 @@ func (m model) statusline() string {
 		mark, text = errMarkStyle.Render("✗"), m.status
 	case m.status != "":
 		mark, text = okMarkStyle.Render("✓"), m.status
+	case m.driftState == driftDrifted:
+		mark, text = warnMarkStyle.Render("⚠"), "live drifted from "+m.driftName+" · s save · o re-apply"
+	case m.driftState == driftSynced:
+		mark, text = okMarkStyle.Render("✓"), "in sync with "+m.driftName
 	case m.mgr.DBSnapshot:
 		text = "db snapshot"
 	}
