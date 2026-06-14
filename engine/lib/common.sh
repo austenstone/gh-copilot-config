@@ -255,6 +255,10 @@ cc_confirm() {
   if [[ ! -t 0 ]]; then
     cc_die "${prompt} Refusing without confirmation (re-run with --force / -y)."
   fi
+  if declare -f cc_tui >/dev/null && cc_tui; then
+    gum confirm "${prompt}"
+    return
+  fi
   printf '%s%s [y/N] %s' "${_C_YEL}" "${prompt}" "${_C_RST}" >&2
   read -r ans
   [[ "${ans}" =~ ^[Yy]([Ee][Ss])?$ ]]
@@ -268,4 +272,46 @@ cc_list_profiles() {
     [[ "${p}" == "_autosave" ]] && continue
     printf '%s\n' "${p}"
   done
+}
+
+# ---- profile metadata (for `list`) --------------------------------------
+# Birth + modified epochs for a path. BSD stat exposes birthtime (%B); GNU
+# stat's %W is 0 when the filesystem can't report it, so fall back to mtime.
+cc_stat_times() {
+  local dir="$1" b m
+  if read -r b m < <(stat -f '%B %m' "${dir}" 2>/dev/null) && [[ -n "${b}" ]]; then
+    :
+  else
+    read -r b m < <(stat -c '%W %Y' "${dir}" 2>/dev/null)
+    [[ -z "${b}" || "${b}" == "0" ]] && b="${m}"
+  fi
+  printf '%s %s\n' "${b:-0}" "${m:-0}"
+}
+
+# "birthEpoch modifiedEpoch sizeKB" for a profile.
+cc_profile_meta() {
+  local dir b m kb
+  dir="$(cc_profile_dir "$1")"
+  read -r b m < <(cc_stat_times "${dir}")
+  kb="$(du -sk "${dir}" 2>/dev/null | awk '{print $1; exit}')"
+  printf '%s %s %s\n' "${b:-0}" "${m:-0}" "${kb:-0}"
+}
+
+# YYYY-MM-DD from an epoch (BSD `date -r`, GNU `date -d @`).
+cc_fmt_date() {
+  local e="$1"
+  [[ -n "${e}" && "${e}" != "0" ]] || { printf '%s' '-'; return; }
+  date -r "${e}" '+%Y-%m-%d' 2>/dev/null \
+    || date -d "@${e}" '+%Y-%m-%d' 2>/dev/null \
+    || printf '%s' '?'
+}
+
+# Human-readable size from kilobytes.
+cc_human_size() {
+  local kb="${1:-0}"
+  if (( kb < 1024 )); then
+    printf '%dK' "${kb}"
+  else
+    awk -v k="${kb}" 'BEGIN{ m=k/1024; if (m<1024) printf "%.1fM", m; else printf "%.1fG", m/1024 }'
+  fi
 }

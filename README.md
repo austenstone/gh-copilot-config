@@ -30,13 +30,23 @@ $ gh copilot-config clean            # wipe to vanilla Copilot
 applied profile 'clean'
 
 $ gh copilot-config list
-  default
-* clean
+  PROFILE  CREATED     MODIFIED      SIZE
+  default  2026-06-01  2026-06-12    1.2M
+* clean    2026-05-20  2026-05-20      0K
 last non-clean: default
 
 $ gh copilot-config on                # restore your last non-clean profile
 applied profile 'default'
 ```
+
+Profiles list sorted by creation date by default. Reorder with
+`list --sort modified|name` and flip with `--reverse`.
+
+Run a bare `gh copilot-config` in a terminal and you get a full interactive
+[bubbletea](https://github.com/charmbracelet/bubbletea) TUI: arrow through your
+profiles and apply, toggle clean, save, create, diff, or delete without leaving
+the screen. Every other invocation (`list`, `apply <name>`, piped, scripted) stays
+pure CLI, so automation is unaffected. See [Interactive TUI](#interactive-tui).
 
 Curious what an apply will touch? Add `--dry-run` to print every planned
 write/removal without changing a thing:
@@ -53,24 +63,28 @@ $ gh copilot-config clean --dry-run
 
 ## Requirements
 
-The extension is plain Bash plus a couple of standard tools, so it runs on **macOS and
-Linux** (and WSL). You need:
+Ships as a **precompiled binary** (a Go + bubbletea front-end that embeds the Bash
+engine), so installing needs nothing but `gh`. At runtime the engine calls a couple
+of standard tools, so it runs on **macOS and Linux** (and WSL). You need:
 
-- [`gh`](https://cli.github.com/) — the GitHub CLI (host for the extension)
-- `bash` 4+ — the entrypoint and helpers
-- `node` — runs `lib/jsonc.mjs` for comment-preserving VS Code settings edits
-  (the `jsonc-parser` dep is vendored in `node_modules/`, so there is no install step)
-- `rsync` — directory sync for `dir` assets
-- `sqlite3` — `VACUUM INTO` snapshots of the Copilot app's `data.db`
+- [`gh`](https://cli.github.com/) the GitHub CLI (host for the extension)
+- `bash` 4+ the embedded engine and helpers
+- `node` runs `lib/jsonc.mjs` for comment-preserving VS Code settings edits
+  (the `jsonc-parser` dep is vendored, so there is no install step)
+- `rsync` directory sync for `dir` assets
+- `sqlite3` `VACUUM INTO` snapshots of the Copilot app's `data.db`
+
+Building from source (instead of installing a release) additionally needs
+[`go`](https://go.dev/) 1.26+.
 
 ## Install
 
 ```bash
-# from a clone
-gh extension install .
-
-# or, once published
+# published release (precompiled, no toolchain needed)
 gh extension install austenstone/gh-copilot-config
+
+# from a clone (builds the binary via script/build.sh, needs Go 1.26+)
+gh extension install .
 ```
 
 It runs as `gh copilot-config <command>`.
@@ -80,7 +94,7 @@ It runs as `gh copilot-config <command>`.
 ```text
 gh copilot-config <command> [args] [--dry-run] [--all]
 
-list                  List profiles (* = active)
+list                  List profiles (* = active), sorted by created date
 status                Show active profile and drift vs live
 save <name>           Snapshot current live config into profile <name>
 apply <name>          Apply profile <name> to live (alias: restore)
@@ -89,10 +103,40 @@ on [name]             Re-apply last non-clean profile (or <name>/default)
 new <name> [--from b] Create a profile (empty, or copied from <b>)
 diff [name]           Diff live config against profile (default: active)
 
+--sort K              list sort key: created (default) | modified | name
+--reverse, -r         Reverse the list order
 --dry-run             Print planned changes without touching disk
 --all                 Include assets flagged optional (e.g. keybindings)
 --with-history        Also back up / restore / clear session history (heavy)
 ```
+
+With no command in an interactive terminal you get the [TUI](#interactive-tui).
+Every named command stays plain CLI. Force non-interactive output anywhere with
+`CC_NO_TUI=1`.
+
+### Interactive TUI
+
+Run a bare `gh copilot-config` (in a TTY) or `gh copilot-config tui` to launch the
+bubbletea UI. It opens on a live table of your profiles (active row marked) and
+drives every action from the keyboard:
+
+| Key | Action |
+|---|---|
+| `↑`/`k`, `↓`/`j` | move selection |
+| `enter` | apply selected profile (confirm) |
+| `o` | re-apply last non-clean profile (`on`) |
+| `c` | apply the empty `clean` profile (confirm) |
+| `s` | save live config into selected profile |
+| `n` | create a new profile |
+| `d` | diff live against selected profile |
+| `x` | delete selected profile (confirm) |
+| `g` | show status / drift |
+| `r` | refresh the list |
+| `?` | toggle help |
+| `q` / `ctrl+c` | quit |
+
+Destructive actions (apply, clean, delete) ask first. Command output (diffs,
+status, dry-run plans) renders in a scrollable pane.
 
 ### Multiple setups
 
@@ -104,7 +148,7 @@ gh copilot-config apply work                # switch to it
 
 ## How it works
 
-A declarative [`manifest.sh`](manifest.sh) maps each managed asset to a
+A declarative [`manifest.sh`](engine/manifest.sh) maps each managed asset to a
 `{surface, live path, profile path, type}` record. Type is one of:
 
 - `file` — whole file (e.g. `mcp-config.json`)
@@ -219,12 +263,17 @@ This means:
 ## Repo layout
 
 ```text
-gh-copilot-config       # extension entrypoint (bash)
-manifest.sh             # declarative asset map
-lib/
-  common.sh             # save/apply/snapshot helpers
-  jsonc.mjs             # comment-preserving JSONC extract/apply (jsonc-parser)
-node_modules/           # vendored jsonc-parser (gh extensions have no install step)
+main.go                 # Go entrypoint: embeds + extracts + execs the engine, launches TUI
+tui.go                  # bubbletea interactive UI
+script/build.sh         # local build (go build -> ./gh-copilot-config)
+engine/                 # the Bash engine, embedded into the binary via go:embed
+  gh-copilot-config.sh  #   dispatch / commands
+  manifest.sh           #   declarative asset map
+  lib/
+    common.sh           #   save/apply/snapshot helpers
+    ui.sh               #   legacy gum fallback (used only when bash is run directly)
+    jsonc.mjs           #   comment-preserving JSONC extract/apply (jsonc-parser)
+  node_modules/         #   vendored jsonc-parser (no install step)
 
 # profile DATA lives outside the repo (default ~/.config/gh-copilot-config/profiles):
 #   default/   your captured setup (cli/ app/ vscode/)
@@ -232,16 +281,22 @@ node_modules/           # vendored jsonc-parser (gh extensions have no install s
 #   _autosave/ safety snapshots (local only)
 ```
 
+The binary embeds `engine/` at build time, extracts it to a content-hashed cache
+dir on first run, then execs it. The bash engine remains the single source of
+truth for all config logic; the Go layer only adds the TUI and the precompiled
+distribution.
+
 ## Contributing
 
 Issues and pull requests are welcome at
 [austenstone/gh-copilot-config](https://github.com/austenstone/gh-copilot-config).
 
-- The tool is the three shell files above plus `lib/jsonc.mjs`; profile data is never
-  part of the repo (see [Where your profiles live](#where-your-profiles-live)).
+- The config logic is the Bash engine under `engine/` plus `lib/jsonc.mjs`; the Go
+  layer (`main.go`, `tui.go`) is just the TUI and precompiled packaging. Profile
+  data is never part of the repo (see [Where your profiles live](#where-your-profiles-live)).
 - Use `--dry-run` while developing to see planned writes/removals without touching disk.
 - Adding support for a new asset is usually a one-line entry in
-  [`manifest.sh`](manifest.sh) — `apply`, `clean`, `diff`, and `save` all flow from it.
+  [`engine/manifest.sh`](engine/manifest.sh) `apply`, `clean`, `diff`, and `save` all flow from it.
 
 ## Version
 

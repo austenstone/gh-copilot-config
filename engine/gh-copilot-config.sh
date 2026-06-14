@@ -16,6 +16,8 @@ CC_PROFILES="${CC_PROFILES:-${XDG_CONFIG_HOME:-${HOME}/.config}/gh-copilot-confi
 source "${CC_DIR}/manifest.sh"
 # shellcheck source=lib/common.sh
 source "${CC_DIR}/lib/common.sh"
+# shellcheck source=lib/ui.sh
+source "${CC_DIR}/lib/ui.sh"
 
 # Ensure the profiles store exists and always has an empty "clean" profile,
 # so a fresh install (with no migrated data) can still toggle to vanilla.
@@ -35,13 +37,14 @@ USAGE
   gh copilot-config <command> [args] [--dry-run] [--all] [--force] [--with-history]
 
 COMMANDS
-  list                       List profiles (* = active)
+  list [--sort K] [--reverse]  List profiles (* = active). Sort K: created|modified|name
   status                     Show active profile and drift vs live
   save <name>                Snapshot current live config into profile <name>
   apply <name>               Apply profile <name> to live (alias: restore)
   clean                      Apply the empty 'clean' profile (alias: off)
   on [name]                  Re-apply last non-clean profile (or <name>/default)
   new <name> [--from <b>]     Create a profile (empty, or copied from <b>)
+  rm <name>                  Delete a profile (alias: delete)
   diff [name]                Diff live config against profile (default: active)
 
 FLAGS
@@ -62,6 +65,8 @@ NOTES
     effect after relaunching the app/CLI.
   • VS Code: only Copilot keys (github.copilot*, chat*, mcp*) are managed;
     your other editor settings and comments are preserved.
+  • Run a bare `gh copilot-config` in a terminal for the interactive TUI;
+    set CC_NO_TUI=1 to force plain output. Every named command stays plain CLI.
 EOF
 }
 
@@ -82,22 +87,90 @@ cc_autosnapshot() {
 }
 
 cmd_list() {
-  local active rest
-  active="$(cc_active)"
-  cc_list_profiles | while read -r p; do
-    if [[ "${p}" == "${active}" ]]; then
-      cc_ok "* ${p}"
-    else
-      cc_log "  ${p}"
-    fi
+  local sort_key="created" reverse=0 porcelain=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --sort)      sort_key="${2:-created}"; shift 2 ;;
+      --sort=*)    sort_key="${1#*=}"; shift ;;
+      --reverse|-r) reverse=1; shift ;;
+      --porcelain) porcelain=1; shift ;;
+      *)           shift ;;
+    esac
   done
-  rest="$(cc_last)"
-  [[ -n "${rest}" ]] && cc_log "${_C_DIM}last non-clean: ${rest}${_C_RST}"
+
+  local active last
+  active="$(cc_active)"
+  last="$(cc_last)"
+
+  # Machine-readable: TSV name<TAB>createdEpoch<TAB>mtimeEpoch<TAB>sizeKB<TAB>active<TAB>last
+  if [[ "${porcelain}" == "1" ]]; then
+    local p b m kb a l
+    while IFS= read -r p; do
+      [[ -n "${p}" ]] || continue
+      read -r b m kb < <(cc_profile_meta "${p}")
+      a=0; [[ "${p}" == "${active}" ]] && a=1
+      l=0; [[ "${p}" == "${last}" ]] && l=1
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${p}" "${b}" "${m}" "${kb}" "${a}" "${l}"
+    done < <(cc_list_profiles)
+    return 0
+  fi
+
+  # Collect "sortEpoch|active|name|birth|mtime|sizeKB" rows.
+  local -a rows=()
+  local p b m kb key act namew=7
+  while IFS= read -r p; do
+    [[ -n "${p}" ]] || continue
+    read -r b m kb < <(cc_profile_meta "${p}")
+    case "${sort_key}" in
+      modified) key="${m}" ;;
+      name)     key="0" ;;
+      *)        key="${b}" ;;
+    esac
+    act=0; [[ "${p}" == "${active}" ]] && act=1
+    rows+=("${key}|${act}|${p}|${b}|${m}|${kb}")
+    (( ${#p} > namew )) && namew="${#p}"
+  done < <(cc_list_profiles)
+
+  if [[ ${#rows[@]} -eq 0 ]]; then
+    cc_warn "no profiles yet — create one with: gh copilot-config save <name>"
+    return 0
+  fi
+
+  local sorted
+  if [[ "${sort_key}" == "name" ]]; then
+    sorted="$(printf '%s\n' "${rows[@]}" | sort -t'|' -k3,3)"
+  else
+    sorted="$(printf '%s\n' "${rows[@]}" | sort -t'|' -k1,1n)"
+  fi
+  if [[ "${reverse}" == "1" ]]; then
+    sorted="$(printf '%s\n' "${sorted}" | { tail -r 2>/dev/null || tac; })"
+  fi
+
+  local header body='' line mark created modified size
+  header="$(printf '  %-*s  %-10s  %-10s  %6s' "${namew}" "PROFILE" "CREATED" "MODIFIED" "SIZE")"
+  while IFS='|' read -r key act p b m kb; do
+    [[ -n "${p}" ]] || continue
+    mark='  '; [[ "${act}" == "1" ]] && mark='* '
+    created="$(cc_fmt_date "${b}")"
+    modified="$(cc_fmt_date "${m}")"
+    size="$(cc_human_size "${kb}")"
+    line="$(printf '%s%-*s  %-10s  %-10s  %6s' "${mark}" "${namew}" "${p}" "${created}" "${modified}" "${size}")"
+    if [[ "${act}" == "1" ]]; then
+      body+="${_C_GRN}${line}${_C_RST}"$'\n'
+    else
+      body+="${line}"$'\n'
+    fi
+  done <<<"${sorted}"
+
+  cc_render_list "${header}" "${body}" "${last}"
   return 0
 }
 
 cmd_save() {
   local name="${1:-}"
+  if [[ -z "${name}" ]] && cc_tui; then
+    name="$(gum input --header 'Save current config as:' --placeholder 'profile name')" || true
+  fi
   [[ -n "${name}" ]] || cc_die "save: need a profile name"
   [[ "${name}" == _* ]] && cc_die "save: names starting with _ are reserved"
   if cc_profile_exists "${name}"; then
@@ -112,6 +185,9 @@ cmd_save() {
 
 cmd_apply() {
   local name="${1:-}"
+  if [[ -z "${name}" ]] && cc_tui; then
+    name="$(cc_pick_profile 'Apply which profile?')" || cc_die "apply: cancelled"
+  fi
   [[ -n "${name}" ]] || cc_die "apply: need a profile name"
   cc_profile_exists "${name}" || cc_die "apply: no such profile '${name}'"
 
@@ -180,10 +256,31 @@ cmd_new() {
   fi
 }
 
+cmd_rm() {
+  local name="${1:-}"
+  if [[ -z "${name}" ]] && cc_tui; then
+    name="$(cc_pick_profile 'Delete which profile?')" || cc_die "rm: cancelled"
+  fi
+  [[ -n "${name}" ]] || cc_die "rm: need a profile name"
+  [[ "${name}" == "clean" ]] && cc_die "rm: refusing to delete the built-in 'clean' profile"
+  [[ "${name}" == _* ]] && cc_die "rm: names starting with _ are reserved"
+  cc_profile_exists "${name}" || cc_die "rm: no such profile '${name}'"
+  cc_confirm "rm: permanently delete profile '${name}'?" \
+    || cc_die "rm aborted (profile '${name}' left unchanged)."
+  local dir; dir="$(cc_profile_dir "${name}")"
+  cc_do "delete profile '${name}'" rm -rf "${dir:?}"
+  [[ "$(cc_active)" == "${name}" ]] && cc_do "clear active marker" rm -f "${CC_PROFILES}/.active"
+  [[ "$(cc_last)" == "${name}" ]] && cc_do "clear last marker" rm -f "${CC_PROFILES}/.last"
+  cc_ok "deleted profile '${name}'"
+}
+
 # Snapshot live into a temp dir and diff it against a profile.
 cmd_diff() {
   local name="${1:-}"
   [[ -n "${name}" ]] || name="$(cc_active)"
+  if [[ -z "${name}" ]] && cc_tui; then
+    name="$(cc_pick_profile 'Diff against which profile?')" || cc_die "diff: cancelled"
+  fi
   [[ -n "${name}" ]] || cc_die "diff: no active profile; pass a name"
   cc_profile_exists "${name}" || cc_die "diff: no such profile '${name}'"
   local tmp out rc=0
@@ -248,17 +345,21 @@ main() {
       *) args+=("$1"); shift ;;
     esac
   done
-  [[ ${#args[@]} -gt 0 ]] || { usage; exit 0; }
+  if [[ ${#args[@]} -eq 0 ]]; then
+    if cc_tui; then cc_menu; exit $?; fi
+    usage; exit 0
+  fi
 
   local cmd="${args[0]}"; args=("${args[@]:1}")
   case "${cmd}" in
-    list)            cmd_list ;;
+    list)            cmd_list "${args[@]:-}" ;;
     status)          cmd_status ;;
     save)            cmd_save "${args[@]:-}" ;;
     apply|restore)   cmd_apply "${args[@]:-}" ;;
     clean|off)       cmd_clean ;;
     on)              cmd_on "${args[@]:-}" ;;
     new)             cmd_new "${args[@]:-}" ;;
+    rm|delete)       cmd_rm "${args[@]:-}" ;;
     diff)            cmd_diff "${args[@]:-}" ;;
     *) cc_die "unknown command '${cmd}' (try: gh copilot-config help)" ;;
   esac
