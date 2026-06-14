@@ -1288,22 +1288,30 @@ func (m model) historyView() string {
 		b.WriteString("\n" + subtleStyle.Render("  q back"))
 		return b.String()
 	}
+	maxTotal := 0
+	for i := 0; i < len(m.snaps)-1; i++ {
+		if t := deltaTotal(m.snapDeltas[i]); t > maxTotal {
+			maxTotal = t
+		}
+	}
 	start, end := windowRange(m.histCursor, len(m.snaps), max(1, m.height-7))
 	for i := start; i < end; i++ {
 		s := m.snaps[i]
 		when := fmt.Sprintf("%s  %s", profile.FmtDate(s.Taken), profile.FmtAgo(s.Taken))
 		summary := deltaSummary(m.snapDeltas[i])
+		bar := churnBar(deltaTotal(m.snapDeltas[i]), maxTotal)
 		if i == len(m.snaps)-1 {
 			summary = subtleStyle.Render("baseline (oldest)")
+			bar = subtleStyle.Render(strings.Repeat("·", churnWidth))
 		}
 		label := ""
 		if l := snapLabel(s); l != "" {
 			label = "  " + subtleStyle.Render(l)
 		}
 		if i == m.histCursor {
-			b.WriteString("  " + promptStyle.Render("▸ "+when) + label + "   " + summary + "\n")
+			b.WriteString("  " + promptStyle.Render("▸ "+when) + label + "  " + bar + "  " + summary + "\n")
 		} else {
-			b.WriteString("    " + subtleStyle.Render(when) + label + "   " + summary + "\n")
+			b.WriteString("    " + subtleStyle.Render(when) + label + "  " + bar + "  " + summary + "\n")
 		}
 	}
 	b.WriteString("\n" + subtleStyle.Render("  ↑/↓ snapshot · enter diff vs previous · a restore to live · q back"))
@@ -1329,6 +1337,35 @@ func (m model) snapDiffView() string {
 	header := titleStyle.Render("  "+m.snapDiffTitle) + subtleStyle.Render("  ·  snapshot diff")
 	footer := subtleStyle.Render("  ↑/↓ scroll · q/esc back")
 	return m.boxed(header, footer)
+}
+
+// churnWidth is the fixed cell width of the per-row churn bar.
+const churnWidth = 8
+
+// deltaTotal sums every added, modified, and removed item across a delta.
+func deltaTotal(d profile.Delta) int {
+	t := 0
+	for _, c := range d.Cats {
+		t += c.Added + c.Modified + c.Removed
+	}
+	return t
+}
+
+// churnBar renders a fixed-width bar whose fill is proportional to a row's total
+// changed items relative to the busiest snapshot, a quick visual magnitude cue.
+func churnBar(total, maxTotal int) string {
+	if maxTotal <= 0 || total <= 0 {
+		return subtleStyle.Render(strings.Repeat("·", churnWidth))
+	}
+	fill := (total*churnWidth + maxTotal/2) / maxTotal
+	if fill < 1 {
+		fill = 1
+	}
+	if fill > churnWidth {
+		fill = churnWidth
+	}
+	bar := lipgloss.NewStyle().Foreground(accent).Render(strings.Repeat("█", fill))
+	return bar + subtleStyle.Render(strings.Repeat("·", churnWidth-fill))
 }
 
 // deltaSummary renders a snapshot's per-category change counts: green additions,
