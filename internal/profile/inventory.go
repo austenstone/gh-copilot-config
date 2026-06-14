@@ -2,6 +2,7 @@ package profile
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -17,14 +18,15 @@ const (
 	CatInstructions = "Custom instructions"
 	CatPrompts      = "Prompt files"
 	CatAgents       = "Custom agents"
-	CatSubagents    = "Subagents"
 	CatSkills       = "Agent skills"
 	CatHooks        = "Hooks"
 	CatMCP          = "MCP servers"
+	CatExtensions   = "Extensions"
+	CatPlugins      = "Plugins"
 )
 
 // Categories is the fixed order categories are presented in.
-var Categories = []string{CatInstructions, CatPrompts, CatAgents, CatSubagents, CatSkills, CatHooks, CatMCP}
+var Categories = []string{CatInstructions, CatPrompts, CatAgents, CatSkills, CatHooks, CatMCP, CatExtensions, CatPlugins}
 
 // InvItem is one customization within a category.
 type InvItem struct {
@@ -72,9 +74,18 @@ func inventoryOf(root string) (Inventory, error) {
 			case base == "hooks":
 				listChildren(p, func(name, child string) { add(CatHooks, name, child) })
 				return filepath.SkipDir
-			case rel == "cli/agents":
-				listChildren(p, func(name, child string) { add(CatSubagents, trimMD(name), child) })
+			case rel == "cli/extensions":
+				listChildren(p, func(name, child string) {
+					add(CatExtensions, name, representativeFile(child, "package.json", "README.md"))
+				})
 				return filepath.SkipDir
+			case rel == "cli/installed-plugins":
+				for _, pl := range plugins(p) {
+					add(CatPlugins, pl.Name, pl.Path)
+				}
+				return filepath.SkipDir
+			case rel == "cli/agents":
+				return filepath.SkipDir // CLI subagents are not surfaced
 			}
 			return nil
 		}
@@ -113,7 +124,88 @@ func mustRel(root, p string) string {
 	return rel
 }
 
-func trimMD(name string) string { return strings.TrimSuffix(name, ".md") }
+// plugins enumerates installed plugins under cli/installed-plugins. Marketplace
+// plugins live at <owner>/<plugin>; directly installed ones under _direct/<plugin>.
+func plugins(dir string) []InvItem {
+	var out []InvItem
+	listChildren(dir, func(name, owner string) {
+		if name == "_direct" {
+			listChildren(owner, func(n, child string) { out = append(out, describePlugin(n, child)) })
+			return
+		}
+		listChildren(owner, func(n, child string) { out = append(out, describePlugin(name+"/"+n, child)) })
+	})
+	return out
+}
+
+// describePlugin labels a plugin with a summary of the customizations it bundles.
+func describePlugin(name, dir string) InvItem {
+	if s := pluginSummary(dir); s != "" {
+		name = name + "  ·  " + s
+	}
+	return InvItem{Name: name, Path: representativeFile(dir, "plugin.json", "README.md")}
+}
+
+// pluginSummary tallies the instructions, skills, agents, MCP servers, etc. a
+// plugin ships so they are visible without polluting the top-level categories.
+func pluginSummary(dir string) string {
+	var instr, prompts, agents, skills, mcp, hooks int
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		base := d.Name()
+		if d.IsDir() {
+			switch base {
+			case "node_modules", ".git":
+				return filepath.SkipDir
+			case "hooks":
+				listChildren(p, func(string, string) { hooks++ })
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		parent := path.Base(path.Dir(p))
+		switch {
+		case base == "SKILL.md":
+			skills++
+		case base == "copilot-instructions.md" || strings.HasSuffix(base, ".instructions.md") || (parent == "instructions" && strings.HasSuffix(base, ".md")):
+			instr++
+		case strings.HasSuffix(base, ".prompt.md"):
+			prompts++
+		case strings.HasSuffix(base, ".agent.md") || strings.HasSuffix(base, ".chatmode.md"):
+			agents++
+		case isMCPFile(base):
+			mcp += len(mcpServers(p))
+		}
+		return nil
+	})
+	var parts []string
+	tally := func(n int, label string) {
+		if n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, label))
+		}
+	}
+	tally(instr, "instr")
+	tally(prompts, "prompts")
+	tally(agents, "agents")
+	tally(skills, "skills")
+	tally(mcp, "mcp")
+	tally(hooks, "hooks")
+	return strings.Join(parts, ", ")
+}
+
+// representativeFile returns the first candidate file that exists in dir, falling
+// back to the directory itself.
+func representativeFile(dir string, candidates ...string) string {
+	for _, c := range candidates {
+		f := filepath.Join(dir, c)
+		if st, err := os.Stat(f); err == nil && !st.IsDir() {
+			return f
+		}
+	}
+	return dir
+}
 
 func listChildren(dir string, fn func(name, path string)) {
 	entries, err := os.ReadDir(dir)
@@ -130,7 +222,7 @@ func listChildren(dir string, fn func(name, path string)) {
 
 func isMCPFile(base string) bool {
 	switch base {
-	case "mcp-config.json", "m-mcp-servers.json", "mcp.json":
+	case "mcp-config.json", "m-mcp-servers.json", "mcp.json", ".mcp.json":
 		return true
 	default:
 		// VS Code settings carry MCP servers under a top-level "mcp" key.

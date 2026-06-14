@@ -51,10 +51,11 @@ var catShort = map[string]string{
 	profile.CatInstructions: "Instr",
 	profile.CatPrompts:      "Prompts",
 	profile.CatAgents:       "Agents",
-	profile.CatSubagents:    "Sub",
 	profile.CatSkills:       "Skills",
 	profile.CatHooks:        "Hooks",
 	profile.CatMCP:          "MCP",
+	profile.CatExtensions:   "Ext",
+	profile.CatPlugins:      "Plugins",
 }
 
 // ---- key bindings -------------------------------------------------------
