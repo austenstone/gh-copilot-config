@@ -217,6 +217,13 @@ func (m *Manager) Diff(name string) (string, error) {
 	return strings.TrimSpace(text), nil
 }
 
+// Snapshot captures the current live config into the timeline on demand,
+// tagged "manual" against the active profile. It is deduped, so capturing twice
+// with no change in between writes a single snapshot.
+func (m *Manager) Snapshot() error {
+	return m.snapshotLive("manual", m.Active())
+}
+
 // snapshotLive captures the current live config into the autosave timeline,
 // tagged with what triggered it. It always includes optional assets, never
 // history, and is skipped when nothing changed since the newest snapshot.

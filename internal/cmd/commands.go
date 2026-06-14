@@ -131,6 +131,19 @@ var applyCmd = &cobra.Command{
 	RunE:    func(cmd *cobra.Command, args []string) error { return runApply(args[0], applySurface, applyFeature) },
 }
 
+var snapshotCmd = &cobra.Command{
+	Use:   "snapshot",
+	Short: "Capture the current live config into the history timeline",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		m, err := newManager()
+		if err != nil {
+			return err
+		}
+		return m.Snapshot()
+	},
+}
+
 var cleanCmd = &cobra.Command{
 	Use:     "clean",
 	Aliases: []string{"off"},

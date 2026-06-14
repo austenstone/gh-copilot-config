@@ -52,7 +52,7 @@ func init() {
 	pf.BoolVar(&flagDB, "with-db", false, "also snapshot Copilot databases (backup-only, heavy)")
 	pf.BoolVarP(&flagForce, "force", "y", false, "skip confirmation prompts")
 
-	rootCmd.AddCommand(listCmd, statusCmd, saveCmd, applyCmd, cleanCmd, onCmd, newCmd, rmCmd, diffCmd, tuiCmd)
+	rootCmd.AddCommand(listCmd, statusCmd, saveCmd, applyCmd, cleanCmd, onCmd, newCmd, rmCmd, diffCmd, snapshotCmd, tuiCmd)
 }
 
 func newManager() (*profile.Manager, error) {

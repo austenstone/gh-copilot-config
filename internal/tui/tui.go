@@ -150,7 +150,7 @@ func surfaceLabel(s profile.Surface) string {
 // ---- key bindings -------------------------------------------------------
 
 type keyMap struct {
-	Up, Down, Left, Right, PrevSurface, NextSurface, Inspect, Apply, On, Clean, Save, New, Diff, Delete, Edit, DB, History, Status, Refresh, Help, Quit key.Binding
+	Up, Down, Left, Right, PrevSurface, NextSurface, Inspect, Apply, On, Clean, Save, Snapshot, New, Diff, Delete, Edit, DB, History, Status, Refresh, Help, Quit key.Binding
 }
 
 var keys = keyMap{
@@ -165,6 +165,7 @@ var keys = keyMap{
 	On:          key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "re-apply last")),
 	Clean:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "clean")),
 	Save:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save")),
+	Snapshot:    key.NewBinding(key.WithKeys("S"), key.WithHelp("S", "snapshot live")),
 	New:         key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
 	Diff:        key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "diff")),
 	Delete:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "delete")),
@@ -936,6 +937,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.start("reading history…", m.loadHistory)
 	case key.Matches(msg, keys.Save):
 		return m.startInput(actSave)
+	case key.Matches(msg, keys.Snapshot):
+		return m.start("snapshotting live…", m.action("snapshot captured", func(mgr *profile.Manager) error { return mgr.Snapshot() }))
 	case key.Matches(msg, keys.New):
 		return m.startInput(actNew)
 	}
