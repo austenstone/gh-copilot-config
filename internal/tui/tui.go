@@ -196,11 +196,12 @@ const (
 type action string
 
 const (
-	actApply  action = "apply"
-	actClean  action = "clean"
-	actDelete action = "delete"
-	actSave   action = "save"
-	actNew    action = "new"
+	actApply   action = "apply"
+	actClean   action = "clean"
+	actDelete  action = "delete"
+	actSave    action = "save"
+	actNew     action = "new"
+	actRestore action = "restore"
 )
 
 // confirmAction describes a confirmable operation: the prompt shown, the
@@ -230,6 +231,23 @@ var confirmActions = map[action]confirmAction{
 		working: func(t string) string { return "deleting " + t + "…" },
 		done:    func(t string) string { return "deleted " + t },
 		run:     func(mgr *profile.Manager, t string) error { return mgr.Remove(t) },
+	},
+	actRestore: {
+		prompt:  func(t string) string { return "Restore snapshot " + t + " to your live Copilot config?" },
+		working: func(t string) string { return "restoring " + t + "…" },
+		done:    func(t string) string { return "restored " + t },
+		run: func(mgr *profile.Manager, t string) error {
+			snaps, err := mgr.Snapshots()
+			if err != nil {
+				return err
+			}
+			for _, s := range snaps {
+				if s.ID == t {
+					return mgr.Restore(s)
+				}
+			}
+			return fmt.Errorf("snapshot %s not found", t)
+		},
 	},
 }
 
@@ -494,6 +512,63 @@ func readFile(name, path string, width int) tea.Cmd {
 	}
 }
 
+type historyMsg struct {
+	snaps  []profile.Snapshot
+	deltas []profile.Delta
+	err    error
+}
+
+// loadHistory reads the autosave timeline and computes each snapshot's change
+// summary against the snapshot taken before it.
+func (m model) loadHistory() (msg tea.Msg) {
+	defer func() {
+		if r := recover(); r != nil {
+			msg = historyMsg{err: fmt.Errorf("panic: %v", r)}
+		}
+	}()
+	mgr := *m.mgr
+	snaps, err := mgr.Snapshots()
+	if err != nil {
+		return historyMsg{err: err}
+	}
+	deltas := make([]profile.Delta, len(snaps))
+	for i := range snaps {
+		if i+1 < len(snaps) {
+			if d, err := profile.DeltaBetween(snaps[i+1].Dir, snaps[i].Dir); err == nil {
+				deltas[i] = d
+			}
+		}
+	}
+	return historyMsg{snaps: snaps, deltas: deltas}
+}
+
+type snapDiffMsg struct {
+	title   string
+	content string
+	err     error
+}
+
+// diffSnaps renders the unified diff between a snapshot and the one before it.
+func (m model) diffSnaps(newer, older profile.Snapshot, width int) tea.Cmd {
+	mgr := *m.mgr
+	return func() (msg tea.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				msg = snapDiffMsg{err: fmt.Errorf("panic: %v", r)}
+			}
+		}()
+		out, err := mgr.DiffSnapshots(older, newer)
+		if err != nil {
+			return snapDiffMsg{err: err}
+		}
+		if out == "" {
+			out = "no differences between these snapshots"
+		}
+		title := fmt.Sprintf("%s → %s", older.ID, newer.ID)
+		return snapDiffMsg{title: title, content: render(out, "snapshot.diff", width)}
+	}
+}
+
 type editorFinishedMsg struct{ err error }
 
 // openInEditor suspends the TUI and opens a file in the user's editor. When
@@ -607,6 +682,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.vp.GotoTop()
 		m.mode = modePreview
 		return m, nil
+	case historyMsg:
+		m.busy = false
+		if msg.err != nil {
+			m.status, m.statusErr = msg.err.Error(), true
+			return m, nil
+		}
+		m.status, m.statusErr = "", false
+		m.snaps, m.snapDeltas, m.histCursor, m.mode = msg.snaps, msg.deltas, 0, modeHistory
+		return m, nil
+	case snapDiffMsg:
+		m.busy = false
+		if msg.err != nil {
+			m.status, m.statusErr = msg.err.Error(), true
+			return m, nil
+		}
+		m.snapDiffTitle = msg.title
+		m.vp.SetContent(msg.content)
+		m.vp.GotoTop()
+		m.mode = modeSnapDiff
+		return m, nil
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case tea.MouseMsg:
@@ -641,6 +736,47 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(msg)
 		return m, cmd
+
+	case modeSnapDiff:
+		switch msg.String() {
+		case "q", "esc":
+			m.mode = modeHistory
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
+
+	case modeHistory:
+		switch {
+		case key.Matches(msg, keys.Quit) || msg.String() == "esc":
+			m.mode = modeList
+			return m, nil
+		case key.Matches(msg, keys.Up):
+			if m.histCursor > 0 {
+				m.histCursor--
+			}
+			return m, nil
+		case key.Matches(msg, keys.Down):
+			if m.histCursor < len(m.snaps)-1 {
+				m.histCursor++
+			}
+			return m, nil
+		case key.Matches(msg, keys.Inspect):
+			older := m.histCursor + 1
+			if older >= len(m.snaps) {
+				m.status, m.statusErr = "oldest snapshot — no earlier revision to diff", false
+				return m, nil
+			}
+			return m.start("diffing snapshots…", m.diffSnaps(m.snaps[m.histCursor], m.snaps[older], max(1, m.width-4)))
+		case key.Matches(msg, keys.Apply):
+			if m.histCursor >= len(m.snaps) {
+				return m, nil
+			}
+			m.pending, m.target, m.mode = actRestore, m.snaps[m.histCursor].ID, modeConfirm
+			return m, nil
+		}
+		return m, nil
 
 	case modeDetail:
 		switch {
@@ -796,6 +932,8 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.start("diffing "+n+"…", m.action("diff "+n, func(mgr *profile.Manager) error { return writeDiff(mgr, n) }))
 		}
 		return m, nil
+	case key.Matches(msg, keys.History):
+		return m.start("reading history…", m.loadHistory)
 	case key.Matches(msg, keys.Save):
 		return m.startInput(actSave)
 	case key.Matches(msg, keys.New):
@@ -869,7 +1007,7 @@ func (m *model) selectByName(name string) {
 // handleWheel advances the list/detail one item per gesture (throttled), while
 // viewport content scrolls freely so reading long files stays smooth.
 func (m model) handleWheel(e tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
-	if m.mode == modeList || m.mode == modeDetail {
+	if m.mode == modeList || m.mode == modeDetail || m.mode == modeHistory {
 		if time.Since(m.lastWheel) < wheelStep {
 			return m, nil
 		}
@@ -897,7 +1035,19 @@ func (m model) handleWheel(e tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case modePreview, modeOutput:
+	case modeHistory:
+		switch e.Button {
+		case tea.MouseWheelUp:
+			if m.histCursor > 0 {
+				m.histCursor--
+			}
+		case tea.MouseWheelDown:
+			if m.histCursor < len(m.snaps)-1 {
+				m.histCursor++
+			}
+		}
+		return m, nil
+	case modePreview, modeOutput, modeSnapDiff:
 		var cmd tea.Cmd
 		m.vp, cmd = m.vp.Update(e)
 		return m, cmd
@@ -977,6 +1127,10 @@ func (m model) render() string {
 		return m.detailView()
 	case modePreview:
 		return m.previewView()
+	case modeHistory:
+		return m.historyView()
+	case modeSnapDiff:
+		return m.snapDiffView()
 	}
 	switch m.mode {
 	case modeOutput:
@@ -1119,6 +1273,98 @@ func (m model) previewView() string {
 	header := titleStyle.Render("  "+name) + subtleStyle.Render("  ·  preview")
 	footer := subtleStyle.Render("  ↑/↓ scroll · q/esc back")
 	return m.boxed(header, footer)
+}
+
+// historyView lists the autosave timeline newest-first, each row stamped with a
+// per-category summary of what changed since the snapshot before it.
+func (m model) historyView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("  Snapshot history") + subtleStyle.Render("  ·  captured before every apply, save, and delete") + "\n\n")
+	if len(m.snaps) == 0 {
+		b.WriteString(subtleStyle.Render("  (no snapshots yet — one is captured automatically before each destructive change)") + "\n")
+		b.WriteString("\n" + subtleStyle.Render("  q back"))
+		return b.String()
+	}
+	start, end := windowRange(m.histCursor, len(m.snaps), max(1, m.height-7))
+	for i := start; i < end; i++ {
+		s := m.snaps[i]
+		when := fmt.Sprintf("%s  %s", profile.FmtDate(s.Taken), profile.FmtAgo(s.Taken))
+		summary := deltaSummary(m.snapDeltas[i])
+		if i == len(m.snaps)-1 {
+			summary = subtleStyle.Render("baseline (oldest)")
+		}
+		label := ""
+		if l := snapLabel(s); l != "" {
+			label = "  " + subtleStyle.Render(l)
+		}
+		if i == m.histCursor {
+			b.WriteString("  " + promptStyle.Render("▸ "+when) + label + "   " + summary + "\n")
+		} else {
+			b.WriteString("    " + subtleStyle.Render(when) + label + "   " + summary + "\n")
+		}
+	}
+	b.WriteString("\n" + subtleStyle.Render("  ↑/↓ snapshot · enter diff vs previous · a restore to live · q back"))
+	return b.String()
+}
+
+// snapLabel renders a snapshot's provenance: what triggered it and the profile
+// it involved, e.g. "overwrite → work" or "apply ← work".
+func snapLabel(s profile.Snapshot) string {
+	switch s.Trigger {
+	case "apply", "restore":
+		return s.Trigger + " ← " + s.Target
+	case "overwrite", "delete":
+		return s.Trigger + " → " + s.Target
+	case "":
+		return ""
+	default:
+		return strings.TrimSpace(s.Trigger + " " + s.Target)
+	}
+}
+
+func (m model) snapDiffView() string {
+	header := titleStyle.Render("  "+m.snapDiffTitle) + subtleStyle.Render("  ·  snapshot diff")
+	footer := subtleStyle.Render("  ↑/↓ scroll · q/esc back")
+	return m.boxed(header, footer)
+}
+
+// deltaSummary renders a snapshot's per-category change counts: green additions,
+// accent modifications, red removals.
+func deltaSummary(d profile.Delta) string {
+	if !d.Changed() {
+		return subtleStyle.Render("no changes")
+	}
+	modStyle := lipgloss.NewStyle().Foreground(accent)
+	var parts []string
+	for _, c := range d.Cats {
+		var seg []string
+		if c.Added > 0 {
+			seg = append(seg, okStyle.Render(fmt.Sprintf("+%d", c.Added)))
+		}
+		if c.Modified > 0 {
+			seg = append(seg, modStyle.Render(fmt.Sprintf("~%d", c.Modified)))
+		}
+		if c.Removed > 0 {
+			seg = append(seg, errStyle.Render(fmt.Sprintf("-%d", c.Removed)))
+		}
+		parts = append(parts, catShort[c.Category]+" "+strings.Join(seg, ""))
+	}
+	return strings.Join(parts, subtleStyle.Render(" · "))
+}
+
+// windowRange returns the [start,end) slice of n items visible around cursor.
+func windowRange(cursor, n, height int) (start, end int) {
+	if height <= 0 || n <= height {
+		return 0, n
+	}
+	start = cursor - height/2
+	if start < 0 {
+		start = 0
+	}
+	if start > n-height {
+		start = n - height
+	}
+	return start, start + height
 }
 
 // titleBar is the app header shared by the list and full-screen overlays.

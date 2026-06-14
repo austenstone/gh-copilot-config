@@ -47,11 +47,19 @@ func (m *Manager) scoped() bool { return m.Surfaces != nil || m.Features != nil 
 
 // ---- high-level commands ------------------------------------------------
 
-// SaveNamed snapshots the live config into profile name.
+// SaveNamed snapshots the live config into profile name. When the profile
+// already exists its prior contents are snapshotted first, so an overwrite can
+// never lose the old version.
 func (m *Manager) SaveNamed(name string) error {
 	dir := m.ProfileDir(name)
+	existed := isDir(dir)
 	if err := m.do("create profile "+name, func() error { return os.MkdirAll(dir, 0o755) }); err != nil {
 		return err
+	}
+	if existed {
+		if err := m.snapshotProfileDir(name, "overwrite"); err != nil {
+			return err
+		}
 	}
 	if err := m.Save(dir); err != nil {
 		return err
@@ -67,7 +75,7 @@ func (m *Manager) ApplyNamed(name string) error {
 	if !m.Exists(name) {
 		return fmt.Errorf("no such profile %q", name)
 	}
-	if err := m.autosnapshot(); err != nil {
+	if err := m.snapshotLive("apply", name); err != nil {
 		return err
 	}
 	if err := m.Apply(m.ProfileDir(name), name == "clean"); err != nil {
@@ -118,6 +126,9 @@ func (m *Manager) Remove(name string) error {
 	}
 	if !m.Exists(name) {
 		return fmt.Errorf("no such profile %q", name)
+	}
+	if err := m.snapshotProfileDir(name, "delete"); err != nil {
+		return err
 	}
 	if err := m.do("delete profile "+name, func() error { return os.RemoveAll(m.ProfileDir(name)) }); err != nil {
 		return err
@@ -206,25 +217,58 @@ func (m *Manager) Diff(name string) (string, error) {
 	return strings.TrimSpace(text), nil
 }
 
-// autosnapshot copies the current live state into _autosave/<timestamp> before a
-// destructive apply. It always includes optional assets and never history.
-func (m *Manager) autosnapshot() error {
-	ts := time.Now().Format("20060102-150405")
-	dir := filepath.Join(m.Dir, "_autosave", ts)
-	snap := *m
-	snap.Optional = true
-	snap.History = false
-	snap.Surfaces = nil // a safety snapshot is always full, never scoped
-	snap.Features = nil
-	if err := snap.do(fmt.Sprintf("autosnapshot live -> _autosave/%s", ts), func() error { return os.MkdirAll(dir, 0o755) }); err != nil {
+// snapshotLive captures the current live config into the autosave timeline,
+// tagged with what triggered it. It always includes optional assets, never
+// history, and is skipped when nothing changed since the newest snapshot.
+func (m *Manager) snapshotLive(trigger, target string) error {
+	return m.recordSnapshot(trigger, target, func(dir string) error {
+		snap := *m
+		snap.Optional = true
+		snap.History = false
+		snap.Surfaces = nil // a safety snapshot is always full, never scoped
+		snap.Features = nil
+		return snap.Save(dir)
+	})
+}
+
+// snapshotProfileDir captures a profile's current on-disk contents into the
+// timeline before it is overwritten or deleted, so nothing is ever lost.
+func (m *Manager) snapshotProfileDir(name, trigger string) error {
+	src := m.ProfileDir(name)
+	if !isDir(src) {
+		return nil
+	}
+	return m.recordSnapshot(trigger, name, func(dir string) error { return syncDir(src, dir) })
+}
+
+// recordSnapshot writes a new _autosave/<ts> entry via fill, stamps it with
+// provenance, and drops it when it's identical to the newest existing snapshot
+// so aggressive autosaving doesn't pile up duplicates.
+func (m *Manager) recordSnapshot(trigger, target string, fill func(dir string) error) error {
+	ts := time.Now().Format(snapshotTimeFormat)
+	rel := filepath.Join("_autosave", ts)
+	dir := filepath.Join(m.Dir, rel)
+	if m.DryRun {
+		m.logf("[dry-run] snapshot %s -> %s", trigger, rel)
+		return nil
+	}
+	prev, _ := m.Snapshots()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if err := snap.Save(dir); err != nil {
+	if err := fill(dir); err != nil {
 		return err
 	}
-	if !m.DryRun {
-		m.logf("↳ safety snapshot: profiles/_autosave/%s", ts)
+	if len(prev) > 0 {
+		if d, err := DeltaBetween(prev[0].Dir, dir); err == nil && !d.Changed() {
+			_ = os.RemoveAll(dir)
+			return nil
+		}
 	}
+	if err := writeSnapMeta(dir, trigger, target); err != nil {
+		return err
+	}
+	m.logf("↳ safety snapshot: profiles/%s (%s)", rel, trigger)
 	return nil
 }
 

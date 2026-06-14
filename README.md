@@ -84,6 +84,12 @@ non-interactive invocation (piped, scripted, `CC_NO_TUI=1`) stays pure CLI. In
 the TUI, inspecting a profile lays its config out as **surface tabs** (`tab` to
 switch) over **feature sub-tabs** (`←/→`).
 
+Press `h` for the **snapshot history**: the `_autosave` timeline that `apply`
+captures before each destructive write, newest first. Each entry is stamped with
+a per-category change summary (e.g. `Skills +2 · Instr ~1 · MCP -1`), and `enter`
+shows the full diff against the snapshot before it, so you can watch how your
+instructions, skills, and the rest evolved over time.
+
 ## Behavior guarantees
 
 - **apply auto-snapshots first** into `_autosave/<timestamp>` before any destructive write.
@@ -102,6 +108,7 @@ internal/profile/             the engine
   store.go                    profiles dir, markers, listing
   asset.go                    save/apply/diff, FS helpers, db snapshot
   inventory.go                per-profile asset classification (TUI detail view)
+  history.go                  _autosave timeline + per-category change deltas
   jsonc.go                    comment-preserving VS Code settings edits
   stat_darwin.go / stat_other.go   birthtime via build tags
   jsonc_test.go               comment-preservation tests
