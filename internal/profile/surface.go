@@ -15,13 +15,12 @@ const (
 	SurfaceVSCode   Surface = "VS Code"
 	SurfaceInsiders Surface = "VS Code Insiders"
 	SurfaceApp      Surface = "Copilot app"
-	SurfaceDotCom   Surface = "github.com"
 	SurfaceAgents   Surface = "Cross-tool agents"
 	SurfaceHistory  Surface = "Session history"
 )
 
 // AllSurfaces lists every surface in display order.
-var AllSurfaces = []Surface{SurfaceCLI, SurfaceVSCode, SurfaceInsiders, SurfaceApp, SurfaceDotCom, SurfaceAgents, SurfaceHistory}
+var AllSurfaces = []Surface{SurfaceCLI, SurfaceVSCode, SurfaceInsiders, SurfaceApp, SurfaceAgents, SurfaceHistory}
 
 // surfaceTokens maps short flag tokens to surfaces (for --surface).
 var surfaceTokens = map[string]Surface{
@@ -30,8 +29,6 @@ var surfaceTokens = map[string]Surface{
 	"code":     SurfaceVSCode,
 	"insiders": SurfaceInsiders,
 	"app":      SurfaceApp,
-	"dotcom":   SurfaceDotCom,
-	"github":   SurfaceDotCom,
 	"agents":   SurfaceAgents,
 	"history":  SurfaceHistory,
 }
@@ -47,8 +44,6 @@ func (s Surface) Token() string {
 		return "insiders"
 	case SurfaceApp:
 		return "app"
-	case SurfaceDotCom:
-		return "dotcom"
 	case SurfaceAgents:
 		return "agents"
 	case SurfaceHistory:
@@ -67,8 +62,6 @@ func surfaceForRel(rel string) Surface {
 		return SurfaceAgents
 	case strings.HasPrefix(rel, "app/"):
 		return SurfaceApp
-	case strings.HasPrefix(rel, "dotcom/"):
-		return SurfaceDotCom
 	case strings.HasPrefix(rel, "vscode/code-insiders/"):
 		return SurfaceInsiders
 	case strings.HasPrefix(rel, "vscode/code/"):

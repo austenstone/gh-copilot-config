@@ -64,10 +64,6 @@ func Manifest() []Asset {
 		{Name: "app-mcp", Surface: SurfaceApp, Feature: CatMCP, Kind: KindFile, Live: filepath.Join(cop, "m-mcp-servers.json"), Rel: "app/m-mcp-servers.json"},
 		{Name: "app-data-db", Surface: SurfaceApp, Feature: FeatDB, Kind: KindDBSnapshot, Live: filepath.Join(cop, "data.db"), Rel: "app/data.db"},
 
-		// github.com personal instructions (no API: opt-in by staging the file
-		// below, then paste it back into the website on apply).
-		{Name: "dotcom-instructions", Surface: SurfaceDotCom, Feature: CatInstructions, Kind: KindFile, Live: filepath.Join(cop, "github-com-instructions.md"), Rel: "dotcom/personal-instructions.instructions.md"},
-
 		// VS Code (stable)
 		{Name: "code-settings", Surface: SurfaceVSCode, Feature: FeatSettings, Kind: KindJSONKeys, Live: filepath.Join(code, "settings.json"), Rel: "vscode/code/settings.copilot.json", KeyRE: copilotKeys},
 		{Name: "code-mcp", Surface: SurfaceVSCode, Feature: CatMCP, Kind: KindFile, Live: filepath.Join(code, "mcp.json"), Rel: "vscode/code/mcp.json"},

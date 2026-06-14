@@ -34,7 +34,6 @@ as a single declarative profile:
 | **Cross-tool agent config** | `~/.agents/` (skills + `.skill-lock.json`) |
 | **GitHub Copilot.app** | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json` |
 | **VS Code** (Code + Insiders) | `settings.json` (Copilot keys only), `mcp.json`, `prompts/`, `keybindings.json` |
-| **github.com** (manual) | personal Chat instructions, staged in `~/.copilot/github-com-instructions.md` (no API; paste back on the website) |
 | **Session history** (opt-in) | history DBs/state via `--with-history` |
 | **Copilot databases** (opt-in) | backup-only snapshot of `~/.copilot/data.db` via `--with-db` |
 
@@ -73,7 +72,7 @@ gh copilot-config apply work --surface cli             # restore just the CLI
 gh copilot-config diff  work --feature instructions,mcp
 ```
 
-- `--surface`: `cli`, `vscode`, `insiders`, `app`, `dotcom`, `agents`, `history`
+- `--surface`: `cli`, `vscode`, `insiders`, `app`, `agents`, `history`
 - `--feature`: `instructions`, `prompts`, `agents`, `skills`, `hooks`, `mcp`,
   `extensions`, `plugins`, `settings`, `db`, `history`
 

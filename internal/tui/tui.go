@@ -77,7 +77,6 @@ var surfaceShort = map[profile.Surface]string{
 	profile.SurfaceVSCode:   "VS Code",
 	profile.SurfaceInsiders: "Insiders",
 	profile.SurfaceApp:      "App",
-	profile.SurfaceDotCom:   "github.com",
 	profile.SurfaceAgents:   "Agents",
 	profile.SurfaceHistory:  "History",
 }

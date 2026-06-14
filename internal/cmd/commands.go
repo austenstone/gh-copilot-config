@@ -22,7 +22,7 @@ var (
 )
 
 const (
-	surfaceFlagHelp = "limit to surfaces (comma-separated: cli,vscode,insiders,app,dotcom,agents,history)"
+	surfaceFlagHelp = "limit to surfaces (comma-separated: cli,vscode,insiders,app,agents,history)"
 	featureFlagHelp = "limit to features (comma-separated: instructions,prompts,agents,skills,hooks,mcp,extensions,plugins,settings,db,history)"
 )
 

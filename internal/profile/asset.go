@@ -80,24 +80,7 @@ func (m *Manager) ApplyNamed(name string) error {
 	if m.History {
 		m.logf("↳ relaunch the GitHub app / Copilot CLI for history changes to take effect")
 	}
-	if m.hasDotComAsset(name) {
-		m.logf("↳ github.com instructions are manual: paste them into Copilot Chat -> your profile -> personal instructions at https://github.com/copilot")
-	}
 	return nil
-}
-
-// hasDotComAsset reports whether the applied profile carries a non-skipped
-// github.com asset, so apply can remind the user to paste it on the website.
-func (m *Manager) hasDotComAsset(name string) bool {
-	for _, a := range m.Assets {
-		if a.Surface != SurfaceDotCom || m.skip(a) {
-			continue
-		}
-		if exists(filepath.Join(m.ProfileDir(name), a.Rel)) {
-			return true
-		}
-	}
-	return false
 }
 
 // New creates a profile, empty or copied from base (when base != "").
