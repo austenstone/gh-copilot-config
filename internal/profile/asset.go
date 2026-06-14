@@ -24,6 +24,12 @@ func (m *Manager) do(desc string, fn func() error) error {
 }
 
 func (m *Manager) skip(a Asset) bool {
+	if m.Surfaces != nil && !m.Surfaces[a.Surface] {
+		return true
+	}
+	if m.Features != nil && !m.Features[a.Feature] {
+		return true
+	}
 	if a.Optional && !m.Optional {
 		return true
 	}
@@ -35,6 +41,9 @@ func (m *Manager) skip(a Asset) bool {
 	}
 	return false
 }
+
+// scoped reports whether a surface or feature filter is active.
+func (m *Manager) scoped() bool { return m.Surfaces != nil || m.Features != nil }
 
 // ---- high-level commands ------------------------------------------------
 
@@ -71,7 +80,24 @@ func (m *Manager) ApplyNamed(name string) error {
 	if m.History {
 		m.logf("↳ relaunch the GitHub app / Copilot CLI for history changes to take effect")
 	}
+	if m.hasDotComAsset(name) {
+		m.logf("↳ github.com instructions are manual: paste them into Copilot Chat -> your profile -> personal instructions at https://github.com/copilot")
+	}
 	return nil
+}
+
+// hasDotComAsset reports whether the applied profile carries a non-skipped
+// github.com asset, so apply can remind the user to paste it on the website.
+func (m *Manager) hasDotComAsset(name string) bool {
+	for _, a := range m.Assets {
+		if a.Surface != SurfaceDotCom || m.skip(a) {
+			continue
+		}
+		if exists(filepath.Join(m.ProfileDir(name), a.Rel)) {
+			return true
+		}
+	}
+	return false
 }
 
 // New creates a profile, empty or copied from base (when base != "").
@@ -154,13 +180,45 @@ func (m *Manager) Diff(name string) (string, error) {
 	if err := snap.Save(tmp); err != nil {
 		return "", err
 	}
+
+	// When scoped, compare against only the scoped slice of the saved profile so
+	// unrelated surfaces don't show up as spurious deletions. Mirror the same
+	// assets out of the profile into a temp tree and diff that instead.
+	profileRoot := m.ProfileDir(name)
+	if m.scoped() {
+		scopedRoot, err := os.MkdirTemp("", "cc-diff-prof-")
+		if err != nil {
+			return "", err
+		}
+		defer os.RemoveAll(scopedRoot)
+		for _, a := range m.Assets {
+			if m.skip(a) {
+				continue
+			}
+			src := filepath.Join(profileRoot, a.Rel)
+			dst := filepath.Join(scopedRoot, a.Rel)
+			switch {
+			case isDir(src):
+				if err := syncDir(src, dst); err != nil {
+					return "", err
+				}
+			case exists(src):
+				if err := copyFile(src, dst); err != nil {
+					return "", err
+				}
+			}
+		}
+		profileRoot = scopedRoot
+	}
+
 	args := []string{"-ruN"}
 	for _, e := range excludes {
 		args = append(args, "--exclude", e)
 	}
-	args = append(args, m.ProfileDir(name), tmp)
+	args = append(args, profileRoot, tmp)
 	out, _ := exec.Command("diff", args...).CombinedOutput()
-	text := strings.ReplaceAll(string(out), m.ProfileDir(name), "<profile:"+name+">")
+	text := strings.ReplaceAll(string(out), profileRoot, "<profile:"+name+">")
+	text = strings.ReplaceAll(text, m.ProfileDir(name), "<profile:"+name+">")
 	text = strings.ReplaceAll(text, tmp, "<live>")
 	return strings.TrimSpace(text), nil
 }
@@ -173,6 +231,8 @@ func (m *Manager) autosnapshot() error {
 	snap := *m
 	snap.Optional = true
 	snap.History = false
+	snap.Surfaces = nil // a safety snapshot is always full, never scoped
+	snap.Features = nil
 	if err := snap.do(fmt.Sprintf("autosnapshot live -> _autosave/%s", ts), func() error { return os.MkdirAll(dir, 0o755) }); err != nil {
 		return err
 	}

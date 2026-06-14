@@ -25,6 +25,16 @@ const (
 	CatPlugins      = "Plugins"
 )
 
+// Feature labels for managed assets that are not surfaced as inventory
+// categories (settings blobs, database snapshots, session history). They exist
+// so every Asset has a feature for --feature scoping, but they never appear as
+// TUI tabs since Categories drives that.
+const (
+	FeatSettings = "Settings"
+	FeatDB       = "Databases"
+	FeatHistory  = "Session history"
+)
+
 // Categories is the fixed order categories are presented in.
 var Categories = []string{CatInstructions, CatPrompts, CatAgents, CatSkills, CatHooks, CatMCP, CatExtensions, CatPlugins}
 
@@ -34,13 +44,35 @@ type InvItem struct {
 	Path string // file to preview or open; for MCP, the config file it lives in
 }
 
-// Inventory is a profile's customizations grouped by category, deduped by name.
+// Inventory is a profile's customizations grouped by surface, then feature
+// category, deduped by name. The surface→feature shape mirrors how config is
+// laid out in the TUI (surface tabs over feature sub-tabs).
 type Inventory struct {
-	Items map[string][]InvItem
+	Items map[Surface]map[string][]InvItem
 }
 
-// Count returns how many items a category holds.
-func (inv Inventory) Count(cat string) int { return len(inv.Items[cat]) }
+// Count returns how many items a surface holds in a feature category.
+func (inv Inventory) Count(s Surface, feature string) int { return len(inv.Items[s][feature]) }
+
+// SurfaceTotal returns how many items a surface holds across all categories.
+func (inv Inventory) SurfaceTotal(s Surface) int {
+	n := 0
+	for _, items := range inv.Items[s] {
+		n += len(items)
+	}
+	return n
+}
+
+// Surfaces returns the surfaces present in the profile, in canonical order.
+func (inv Inventory) Surfaces() []Surface {
+	var out []Surface
+	for _, s := range AllSurfaces {
+		if inv.SurfaceTotal(s) > 0 {
+			out = append(out, s)
+		}
+	}
+	return out
+}
 
 // Inspect classifies every managed asset in a saved profile into categories.
 func (m *Manager) Inspect(name string) (Inventory, error) {
@@ -48,17 +80,19 @@ func (m *Manager) Inspect(name string) (Inventory, error) {
 }
 
 func inventoryOf(root string) (Inventory, error) {
-	seen := map[string]map[string]bool{}
-	inv := Inventory{Items: map[string][]InvItem{}}
+	seen := map[string]bool{}
+	inv := Inventory{Items: map[Surface]map[string][]InvItem{}}
 	add := func(cat, name, p string) {
-		if seen[cat] == nil {
-			seen[cat] = map[string]bool{}
-		}
-		if seen[cat][name] {
+		s := surfaceForRel(filepath.ToSlash(mustRel(root, p)))
+		key := string(s) + "\x00" + cat + "\x00" + name
+		if seen[key] {
 			return
 		}
-		seen[cat][name] = true
-		inv.Items[cat] = append(inv.Items[cat], InvItem{Name: name, Path: p})
+		seen[key] = true
+		if inv.Items[s] == nil {
+			inv.Items[s] = map[string][]InvItem{}
+		}
+		inv.Items[s][cat] = append(inv.Items[s][cat], InvItem{Name: name, Path: p})
 	}
 
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -110,8 +144,10 @@ func inventoryOf(root string) (Inventory, error) {
 	if err != nil {
 		return inv, err
 	}
-	for _, items := range inv.Items {
-		sort.Slice(items, func(i, j int) bool { return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name) })
+	for _, feats := range inv.Items {
+		for _, items := range feats {
+			sort.Slice(items, func(i, j int) bool { return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name) })
+		}
 	}
 	return inv, nil
 }

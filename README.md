@@ -34,6 +34,7 @@ as a single declarative profile:
 | **Cross-tool agent config** | `~/.agents/` (skills + `.skill-lock.json`) |
 | **GitHub Copilot.app** | `~/.copilot/m-settings.json`, `~/.copilot/m-mcp-servers.json` |
 | **VS Code** (Code + Insiders) | `settings.json` (Copilot keys only), `mcp.json`, `prompts/`, `keybindings.json` |
+| **github.com** (manual) | personal Chat instructions, staged in `~/.copilot/github-com-instructions.md` (no API; paste back on the website) |
 | **Session history** (opt-in) | history DBs/state via `--with-history` |
 | **Copilot databases** (opt-in) | backup-only snapshot of `~/.copilot/data.db` via `--with-db` |
 
@@ -60,8 +61,29 @@ Global flags: `--dry-run` (print planned writes, change nothing), `--all` (inclu
 optional assets), `--with-history` (include session history), `--with-db` (snapshot
 Copilot databases, backup-only), `--force`/`-y` (skip confirmation).
 
+### Scoping by surface and feature
+
+Copilot config lives on two axes: **surface** (where it lives) and **feature**
+(what it is). `save`, `apply`, and `diff` accept `--surface` and `--feature` to
+work on a slice instead of the whole profile:
+
+```console
+gh copilot-config save  work --surface vscode,cli      # only those tools
+gh copilot-config apply work --surface cli             # restore just the CLI
+gh copilot-config diff  work --feature instructions,mcp
+```
+
+- `--surface`: `cli`, `vscode`, `insiders`, `app`, `dotcom`, `agents`, `history`
+- `--feature`: `instructions`, `prompts`, `agents`, `skills`, `hooks`, `mcp`,
+  `extensions`, `plugins`, `settings`, `db`, `history`
+
+Scoping never weakens safety: `apply` still takes a **full** `_autosave`
+snapshot before writing, even when the apply itself is scoped.
+
 Run a bare `gh copilot-config` in a TTY and you get the bubbletea TUI. Any
-non-interactive invocation (piped, scripted, `CC_NO_TUI=1`) stays pure CLI.
+non-interactive invocation (piped, scripted, `CC_NO_TUI=1`) stays pure CLI. In
+the TUI, inspecting a profile lays its config out as **surface tabs** (`tab` to
+switch) over **feature sub-tabs** (`←/→`).
 
 ## Behavior guarantees
 

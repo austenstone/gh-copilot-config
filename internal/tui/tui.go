@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
+	"time"
 
 	"github.com/austenstone/gh-copilot-config/internal/profile"
 	"github.com/charmbracelet/bubbles/help"
@@ -22,20 +24,22 @@ import (
 
 // Run launches the interactive TUI against a manager.
 func Run(m *profile.Manager) error {
-	_, err := tea.NewProgram(newModel(m), tea.WithAltScreen()).Run()
+	_, err := tea.NewProgram(newModel(m), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
 // ---- styles -------------------------------------------------------------
 
-// Semantic palette (Catppuccin: Latte on light terminals, Mocha on dark).
+// Semantic palette in GitHub's colors: a fixed GitHub blue accent (so it reads
+// the same regardless of the terminal's ANSI palette) with green=success,
+// red=failure, and a muted gray for secondary text, matching the gh CLI.
 var (
-	accent  = lipgloss.AdaptiveColor{Light: "#8839ef", Dark: "#cba6f7"} // mauve
-	dim     = lipgloss.AdaptiveColor{Light: "#8c8fa1", Dark: "#6c7086"} // overlay
-	green   = lipgloss.AdaptiveColor{Light: "#40a02b", Dark: "#a6e3a1"}
-	red     = lipgloss.AdaptiveColor{Light: "#d20f39", Dark: "#f38ba8"}
-	selFg   = lipgloss.AdaptiveColor{Light: "#eff1f5", Dark: "#1e1e2e"} // base, for text on accent
-	surface = lipgloss.AdaptiveColor{Light: "#ccd0da", Dark: "#313244"} // surface0, for bars
+	accent  = lipgloss.AdaptiveColor{Light: "#0969da", Dark: "#2f81f7"} // GitHub blue
+	dim     = lipgloss.AdaptiveColor{Light: "245", Dark: "242"}         // gh's muted gray
+	green   = lipgloss.Color("2")                                       // success
+	red     = lipgloss.Color("1")                                       // failure
+	selFg   = lipgloss.Color("15")                                      // white text on a colored bar
+	surface = lipgloss.AdaptiveColor{Light: "254", Dark: "236"}         // bar background
 
 	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	subtleStyle = lipgloss.NewStyle().Foreground(dim)
@@ -67,10 +71,28 @@ var catShort = map[string]string{
 	profile.CatPlugins:      "Plugins",
 }
 
+// surfaceShort maps surfaces to compact tab titles.
+var surfaceShort = map[profile.Surface]string{
+	profile.SurfaceCLI:      "CLI",
+	profile.SurfaceVSCode:   "VS Code",
+	profile.SurfaceInsiders: "Insiders",
+	profile.SurfaceApp:      "App",
+	profile.SurfaceDotCom:   "github.com",
+	profile.SurfaceAgents:   "Agents",
+	profile.SurfaceHistory:  "History",
+}
+
+func surfaceLabel(s profile.Surface) string {
+	if l, ok := surfaceShort[s]; ok {
+		return l
+	}
+	return string(s)
+}
+
 // ---- key bindings -------------------------------------------------------
 
 type keyMap struct {
-	Up, Down, Left, Right, Inspect, Apply, On, Clean, Save, New, Diff, Delete, Edit, DB, Status, Refresh, Help, Quit key.Binding
+	Up, Down, Left, Right, PrevSurface, NextSurface, Inspect, Apply, On, Clean, Save, New, Diff, Delete, Edit, DB, Status, Refresh, Help, Quit key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
@@ -87,24 +109,26 @@ func (k keyMap) FullHelp() [][]key.Binding {
 }
 
 var keys = keyMap{
-	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
-	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
-	Left:    key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev tab")),
-	Right:   key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next tab")),
-	Inspect: key.NewBinding(key.WithKeys("enter", "i"), key.WithHelp("enter", "inspect")),
-	Apply:   key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apply")),
-	On:      key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "re-apply last")),
-	Clean:   key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "clean")),
-	Save:    key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save")),
-	New:     key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
-	Diff:    key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "diff")),
-	Delete:  key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "delete")),
-	Edit:    key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "open in $EDITOR")),
-	DB:      key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "toggle db snapshots")),
-	Status:  key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "status")),
-	Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
-	Help:    key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
-	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
+	Up:          key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
+	Down:        key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Left:        key.NewBinding(key.WithKeys("left", "h"), key.WithHelp("←/h", "prev category")),
+	Right:       key.NewBinding(key.WithKeys("right", "l"), key.WithHelp("→/l", "next category")),
+	PrevSurface: key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("⇧tab", "prev surface")),
+	NextSurface: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next surface")),
+	Inspect:     key.NewBinding(key.WithKeys("enter", "i"), key.WithHelp("enter", "inspect")),
+	Apply:       key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "apply")),
+	On:          key.NewBinding(key.WithKeys("o"), key.WithHelp("o", "re-apply last")),
+	Clean:       key.NewBinding(key.WithKeys("c"), key.WithHelp("c", "clean")),
+	Save:        key.NewBinding(key.WithKeys("s"), key.WithHelp("s", "save")),
+	New:         key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "new")),
+	Diff:        key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "diff")),
+	Delete:      key.NewBinding(key.WithKeys("x"), key.WithHelp("x", "delete")),
+	Edit:        key.NewBinding(key.WithKeys("e"), key.WithHelp("e", "open in editor")),
+	DB:          key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "toggle db snapshots")),
+	Status:      key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "status")),
+	Refresh:     key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
+	Help:        key.NewBinding(key.WithKeys("?"), key.WithHelp("?", "help")),
+	Quit:        key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
 
 // ---- model --------------------------------------------------------------
@@ -194,8 +218,10 @@ type model struct {
 
 	inv        profile.Inventory // categorized assets of the inspected profile
 	detailName string            // profile shown in modeDetail
-	tab        int               // active category tab
+	surfaceTab int               // active surface tab
+	tab        int               // active category tab within the surface
 	itemCursor int               // selected item within the active tab
+	lastWheel  time.Time         // throttles high-res scroll bursts to one step
 }
 
 func newModel(mgr *profile.Manager) model {
@@ -306,10 +332,22 @@ func readFile(name, path string, width int) tea.Cmd {
 
 type editorFinishedMsg struct{ err error }
 
-// openInEditor suspends the TUI and opens a file in the user's editor.
+// openInEditor suspends the TUI and opens a file in the user's editor. When
+// neither $VISUAL nor $EDITOR is set, it falls back to the OS default opener.
 func openInEditor(p string) tea.Cmd {
-	editor := cmp.Or(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi")
-	c := exec.Command(editor, p)
+	var c *exec.Cmd
+	if editor := cmp.Or(os.Getenv("VISUAL"), os.Getenv("EDITOR")); editor != "" {
+		c = exec.Command(editor, p)
+	} else {
+		switch runtime.GOOS {
+		case "darwin":
+			c = exec.Command("open", "-W", "-t", p)
+		case "windows":
+			c = exec.Command("cmd", "/c", "start", "/wait", "", p)
+		default:
+			c = exec.Command("xdg-open", p)
+		}
+	}
 	return tea.ExecProcess(c, func(err error) tea.Msg { return editorFinishedMsg{err: err} })
 }
 
@@ -367,8 +405,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status, m.statusErr = msg.err.Error(), true
 			return m, nil
 		}
+		m.status, m.statusErr = "", false
 		m.inv, m.detailName = msg.inv, msg.name
-		m.tab, m.itemCursor, m.mode = 0, 0, modeDetail
+		m.surfaceTab, m.tab, m.itemCursor, m.mode = 0, 0, 0, modeDetail
 		return m, nil
 	case editorFinishedMsg:
 		if msg.err != nil {
@@ -383,6 +422,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	}
 	var cmd tea.Cmd
 	m.tbl, cmd = m.tbl.Update(msg)
@@ -419,12 +460,28 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Quit) || msg.String() == "esc":
 			m.mode = modeList
 			return m, nil
+		case key.Matches(msg, keys.NextSurface):
+			if n := len(m.surfaces()); n > 0 {
+				m.surfaceTab = (m.surfaceTab + 1) % n
+				m.tab, m.itemCursor = 0, 0
+			}
+			return m, nil
+		case key.Matches(msg, keys.PrevSurface):
+			if n := len(m.surfaces()); n > 0 {
+				m.surfaceTab = (m.surfaceTab + n - 1) % n
+				m.tab, m.itemCursor = 0, 0
+			}
+			return m, nil
 		case key.Matches(msg, keys.Left):
-			m.tab = (m.tab + len(profile.Categories) - 1) % len(profile.Categories)
+			if n := len(m.surfaceFeatures()); n > 0 {
+				m.tab = (m.tab + n - 1) % n
+			}
 			m.itemCursor = 0
 			return m, nil
 		case key.Matches(msg, keys.Right):
-			m.tab = (m.tab + 1) % len(profile.Categories)
+			if n := len(m.surfaceFeatures()); n > 0 {
+				m.tab = (m.tab + 1) % n
+			}
 			m.itemCursor = 0
 			return m, nil
 		case key.Matches(msg, keys.Up):
@@ -494,7 +551,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// modeList
 	switch {
-	case key.Matches(msg, keys.Quit):
+	case key.Matches(msg, keys.Quit) || msg.String() == "esc":
 		return m, tea.Quit
 	case key.Matches(msg, keys.Help):
 		m.help.ShowAll = !m.help.ShowAll
@@ -562,6 +619,67 @@ func (m model) startInput(a action) (tea.Model, tea.Cmd) {
 	return m, textinput.Blink
 }
 
+// listDataTop is the screen row of the first profile row: title, rule, and a
+// blank line from heading(), then the table's header and its bottom border.
+const listDataTop = 5
+
+// wheelStep coalesces a burst of high-resolution scroll events (macOS momentum
+// scrolling on Retina displays fires many per gesture) into a single step.
+const wheelStep = 80 * time.Millisecond
+
+// handleMouse routes wheel scrolling and click-to-select. The profile table has
+// no native mouse support, so clicks are mapped to row cursor moves by hand.
+func (m model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	wheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown
+
+	// Discrete list/detail navigation advances one item per gesture; viewport
+	// content (preview/output) scrolls freely so reading long files stays smooth.
+	if wheel && (m.mode == modeList || m.mode == modeDetail) {
+		if time.Since(m.lastWheel) < wheelStep {
+			return m, nil
+		}
+		m.lastWheel = time.Now()
+	}
+
+	switch m.mode {
+	case modeList:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.tbl.MoveUp(1)
+			return m, nil
+		case tea.MouseButtonWheelDown:
+			m.tbl.MoveDown(1)
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if row := msg.Y - listDataTop; row >= 0 && row < len(m.tbl.Rows()) {
+				m.tbl.SetCursor(row)
+				if n := m.selected(); n != "" {
+					return m.start("reading "+n+"…", m.inspect(n))
+				}
+			}
+		}
+		return m, nil
+	case modeDetail:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if m.itemCursor > 0 {
+				m.itemCursor--
+			}
+		case tea.MouseButtonWheelDown:
+			if n := len(m.curItems()); n > 0 && m.itemCursor < n-1 {
+				m.itemCursor++
+			}
+		}
+		return m, nil
+	case modePreview, modeOutput:
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
 func (m model) selected() string {
 	r := m.tbl.SelectedRow()
 	if len(r) < 2 {
@@ -570,7 +688,41 @@ func (m model) selected() string {
 	return r[1]
 }
 
-func (m model) curItems() []profile.InvItem { return m.inv.Items[profile.Categories[m.tab]] }
+func (m model) surfaces() []profile.Surface { return m.inv.Surfaces() }
+
+// curSurface is the surface for the active surface tab, clamped to range.
+func (m model) curSurface() profile.Surface {
+	ss := m.surfaces()
+	if len(ss) == 0 {
+		return ""
+	}
+	i := m.surfaceTab
+	if i >= len(ss) {
+		i = len(ss) - 1
+	}
+	return ss[i]
+}
+
+// surfaceFeatures lists the feature categories present in the current surface,
+// in canonical order, so empty categories never show as tabs.
+func (m model) surfaceFeatures() []string {
+	s := m.curSurface()
+	var out []string
+	for _, f := range profile.Categories {
+		if m.inv.Count(s, f) > 0 {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+func (m model) curItems() []profile.InvItem {
+	feats := m.surfaceFeatures()
+	if m.tab < 0 || m.tab >= len(feats) {
+		return nil
+	}
+	return m.inv.Items[m.curSurface()][feats[m.tab]]
+}
 
 func (m model) curItem() (profile.InvItem, bool) {
 	items := m.curItems()
@@ -665,36 +817,60 @@ func truncate(s string, w int) string {
 
 func (m model) detailView() string {
 	var b strings.Builder
-	b.WriteString(m.heading(m.detailName, "profile detail"))
+	b.WriteString(titleStyle.Render("  "+m.detailName) + "\n\n")
 
+	surfaces := m.surfaces()
+	if len(surfaces) == 0 {
+		b.WriteString(subtleStyle.Render("  (empty profile — nothing customized)") + "\n")
+		b.WriteString("\n" + subtleStyle.Render("  q back"))
+		return b.String()
+	}
+
+	// Surface row (primary axis).
 	b.WriteString("  ")
-	for i, c := range profile.Categories {
-		label := fmt.Sprintf("%s %d", catShort[c], m.inv.Count(c))
+	for i, s := range surfaces {
+		label := fmt.Sprintf("%s %d", surfaceLabel(s), m.inv.SurfaceTotal(s))
 		style := tabStyle
-		if i == m.tab {
+		if i == m.surfaceTab {
 			style = activeTabStyle
 		}
 		b.WriteString(style.Render(label) + " ")
 	}
-	b.WriteString("\n" + ruleStyle.Render(strings.Repeat("─", max(1, m.width))) + "\n\n")
+	b.WriteString("\n")
+
+	// Feature row (secondary axis, scoped to the active surface).
+	cur := m.curSurface()
+	feats := m.surfaceFeatures()
+	b.WriteString("  ")
+	if len(feats) == 0 {
+		b.WriteString(subtleStyle.Render("(none)"))
+	} else {
+		for i, f := range feats {
+			label := fmt.Sprintf("%s %d", catShort[f], m.inv.Count(cur, f))
+			style := tabStyle
+			if i == m.tab {
+				style = activeTabStyle
+			}
+			b.WriteString(style.Render(label) + " ")
+		}
+	}
+	b.WriteString("\n\n")
 
 	items := m.curItems()
-	rowW := max(1, m.width-2)
 	if len(items) == 0 {
 		b.WriteString(subtleStyle.Render("  (none)") + "\n")
 	} else {
 		visible, offset := windowItems(items, m.itemCursor, max(1, m.height-11))
 		for i, it := range visible {
-			name := truncate(it.Name, rowW-4)
 			if offset+i == m.itemCursor {
-				b.WriteString("  " + selRowStyle.Width(rowW-2).Render("▸ "+name) + "\n")
+				b.WriteString("  " + promptStyle.Render("▸ "+it.Name) + "\n")
 			} else {
-				b.WriteString("    " + name + "\n")
+				b.WriteString("    " + it.Name + "\n")
 			}
 		}
 	}
 
-	b.WriteString("\n" + subtleStyle.Render("  ←/→ category · ↑/↓ item · enter preview · e edit · a apply · q back"))
+	b.WriteString("\n" + subtleStyle.Render("  tab surface · ←/→ category · ↑/↓ item · enter preview · e edit · a apply · q back"))
 	return b.String()
 }
 

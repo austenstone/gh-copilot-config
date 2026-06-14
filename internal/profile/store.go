@@ -16,13 +16,15 @@ import (
 
 // Manager performs all profile operations against a profiles directory.
 type Manager struct {
-	Dir        string    // profiles store
-	Assets     []Asset   // managed manifest
-	Out        io.Writer // human-readable progress output
-	DryRun     bool      // print planned changes, touch nothing
-	Optional   bool      // include assets flagged optional (--all)
-	History    bool      // include session history (--with-history)
-	DBSnapshot bool      // include backup-only DB snapshots (--with-db)
+	Dir        string           // profiles store
+	Assets     []Asset          // managed manifest
+	Out        io.Writer        // human-readable progress output
+	DryRun     bool             // print planned changes, touch nothing
+	Optional   bool             // include assets flagged optional (--all)
+	History    bool             // include session history (--with-history)
+	DBSnapshot bool             // include backup-only DB snapshots (--with-db)
+	Surfaces   map[Surface]bool // nil = all surfaces; else only these (--surface)
+	Features   map[string]bool  // nil = all features; else only these (--feature)
 }
 
 // Open resolves the profiles directory, ensures the built-in empty "clean"

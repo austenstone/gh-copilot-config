@@ -15,12 +15,28 @@ var (
 	listSort    string
 	listReverse bool
 	newFrom     string
+
+	saveSurface, saveFeature   string
+	applySurface, applyFeature string
+	diffSurface, diffFeature   string
+)
+
+const (
+	surfaceFlagHelp = "limit to surfaces (comma-separated: cli,vscode,insiders,app,dotcom,agents,history)"
+	featureFlagHelp = "limit to features (comma-separated: instructions,prompts,agents,skills,hooks,mcp,extensions,plugins,settings,db,history)"
 )
 
 func init() {
 	listCmd.Flags().StringVar(&listSort, "sort", "created", "sort key: created|modified|name")
 	listCmd.Flags().BoolVarP(&listReverse, "reverse", "r", false, "reverse the list order")
 	newCmd.Flags().StringVar(&newFrom, "from", "", "base profile to copy from")
+
+	saveCmd.Flags().StringVar(&saveSurface, "surface", "", surfaceFlagHelp)
+	saveCmd.Flags().StringVar(&saveFeature, "feature", "", featureFlagHelp)
+	applyCmd.Flags().StringVar(&applySurface, "surface", "", surfaceFlagHelp)
+	applyCmd.Flags().StringVar(&applyFeature, "feature", "", featureFlagHelp)
+	diffCmd.Flags().StringVar(&diffSurface, "surface", "", surfaceFlagHelp)
+	diffCmd.Flags().StringVar(&diffFeature, "feature", "", featureFlagHelp)
 }
 
 var listCmd = &cobra.Command{
@@ -97,6 +113,9 @@ var saveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := scope(m, saveSurface, saveFeature); err != nil {
+			return err
+		}
 		if m.Exists(name) && !confirm(fmt.Sprintf("profile %q exists, overwrite it?", name)) {
 			return fmt.Errorf("save aborted")
 		}
@@ -109,7 +128,7 @@ var applyCmd = &cobra.Command{
 	Aliases: []string{"restore"},
 	Short:   "Apply a profile to live",
 	Args:    cobra.ExactArgs(1),
-	RunE:    func(cmd *cobra.Command, args []string) error { return runApply(args[0]) },
+	RunE:    func(cmd *cobra.Command, args []string) error { return runApply(args[0], applySurface, applyFeature) },
 }
 
 var cleanCmd = &cobra.Command{
@@ -117,7 +136,7 @@ var cleanCmd = &cobra.Command{
 	Aliases: []string{"off"},
 	Short:   "Reset live Copilot config to vanilla (apply the empty 'clean' profile)",
 	Args:    cobra.NoArgs,
-	RunE:    func(cmd *cobra.Command, args []string) error { return runApply("clean") },
+	RunE:    func(cmd *cobra.Command, args []string) error { return runApply("clean", "", "") },
 }
 
 var onCmd = &cobra.Command{
@@ -138,7 +157,7 @@ var onCmd = &cobra.Command{
 				name = "default"
 			}
 		}
-		return runApply(name)
+		return runApply(name, "", "")
 	},
 }
 
@@ -189,6 +208,9 @@ var diffCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := scope(m, diffSurface, diffFeature); err != nil {
+			return err
+		}
 		name := m.Active()
 		if len(args) == 1 {
 			name = args[0]
@@ -225,9 +247,12 @@ var tuiCmd = &cobra.Command{
 
 // runApply handles the apply flow shared by apply/clean/on, including the
 // history-write guard and its confirmations.
-func runApply(name string) error {
+func runApply(name, surfaceCSV, featureCSV string) error {
 	m, err := newManager()
 	if err != nil {
+		return err
+	}
+	if err := scope(m, surfaceCSV, featureCSV); err != nil {
 		return err
 	}
 	if !m.Exists(name) {
@@ -255,6 +280,22 @@ func validName(name string) error {
 	if strings.HasPrefix(name, "_") {
 		return fmt.Errorf("names starting with _ are reserved")
 	}
+	return nil
+}
+
+// scope applies --surface / --feature filters to a manager. Empty strings leave
+// the manager unfiltered (all surfaces and features).
+func scope(m *profile.Manager, surfaceCSV, featureCSV string) error {
+	surfaces, err := profile.ParseSurfaces(surfaceCSV)
+	if err != nil {
+		return err
+	}
+	features, err := profile.ParseFeatures(featureCSV)
+	if err != nil {
+		return err
+	}
+	m.Surfaces = surfaces
+	m.Features = features
 	return nil
 }
 

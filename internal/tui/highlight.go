@@ -17,13 +17,95 @@ import (
 
 // render turns file content into preview-ready text: markdown goes through
 // glamour (glow's renderer), everything else gets chroma syntax highlighting.
+// YAML frontmatter is split off and rendered as its own metadata panel so the
+// preview doesn't dump raw --- fences through the markdown renderer.
 func render(content, filename string, width int) string {
 	if isMarkdown(filename) {
-		if out, err := renderMarkdown(content, width); err == nil {
-			return out
+		fm, body, ok := splitFrontmatter(content)
+		out, err := renderMarkdown(body, width)
+		if err != nil {
+			out = highlight(body, filename)
 		}
+		if ok {
+			if panel := renderFrontmatter(fm, width); panel != "" {
+				return panel + "\n\n" + out
+			}
+		}
+		return out
 	}
 	return highlight(content, filename)
+}
+
+// splitFrontmatter separates a leading YAML frontmatter block (delimited by ---
+// fences) from the markdown body. ok is false when there's no frontmatter, in
+// which case body is the original content untouched.
+func splitFrontmatter(content string) (frontmatter, body string, ok bool) {
+	lines := strings.Split(content, "\n")
+	if len(lines) == 0 || strings.TrimRight(lines[0], "\r") != "---" {
+		return "", content, false
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimRight(lines[i], "\r") == "---" {
+			fm := strings.Join(lines[1:i], "\n")
+			rest := strings.Join(lines[i+1:], "\n")
+			return fm, strings.TrimLeft(rest, "\n"), true
+		}
+	}
+	return "", content, false
+}
+
+// renderFrontmatter formats YAML frontmatter as a two-column metadata panel:
+// bold accent keys, wrapped values, set off by a left accent bar. It parses
+// only top-level "key: value" lines; nested or list lines fall under the
+// previous key as dimmed continuations. Returns "" when there's nothing to show.
+func renderFrontmatter(fm string, width int) string {
+	type row struct{ key, val string }
+	var rows []row
+	keyW := 0
+	for _, raw := range strings.Split(fm, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		k, v, found := strings.Cut(line, ":")
+		indented := line[0] == ' ' || line[0] == '\t' || line[0] == '-'
+		if !found || indented {
+			rows = append(rows, row{"", strings.TrimSpace(line)})
+			continue
+		}
+		k = strings.TrimSpace(k)
+		if w := lipgloss.Width(k); w > keyW {
+			keyW = w
+		}
+		rows = append(rows, row{k, strings.TrimSpace(v)})
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+
+	keyStyle := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	contStyle := lipgloss.NewStyle().Foreground(dim)
+	valW := max(10, width-keyW-6) // 4 border/pad + 2 gap between columns
+
+	var b strings.Builder
+	for i, r := range rows {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		if r.key == "" {
+			b.WriteString(lipgloss.NewStyle().Width(valW).Render(contStyle.Render(r.val)))
+			continue
+		}
+		keyCol := keyStyle.Width(keyW).Render(r.key)
+		valCol := lipgloss.NewStyle().Width(valW).Render(r.val)
+		b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, keyCol, "  ", valCol))
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(accent).
+		PaddingLeft(1).
+		Render(b.String())
 }
 
 func isMarkdown(filename string) bool {
@@ -86,9 +168,9 @@ func cachedRenderer(width int, dark bool) (*glamour.TermRenderer, error) {
 func highlight(content, filename string) string {
 	lexer := chroma.Coalesce(lexerFor(filename, content))
 
-	style := styles.Get("catppuccin-mocha")
+	style := styles.Get("github-dark")
 	if !lipgloss.HasDarkBackground() {
-		style = styles.Get("catppuccin-latte")
+		style = styles.Get("github")
 	}
 	if style == nil {
 		style = styles.Fallback
