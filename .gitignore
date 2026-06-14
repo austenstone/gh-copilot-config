@@ -8,3 +8,6 @@ gh-copilot-config
 # noise
 .DS_Store
 *.local
+
+# built binary
+/gh-copilot-config

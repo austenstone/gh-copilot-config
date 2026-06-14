@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/austenstone/gh-copilot-config/internal/profile"
@@ -16,6 +17,7 @@ var (
 	flagHistory bool
 	flagDB      bool
 	flagForce   bool
+	flagJSON    bool
 )
 
 var rootCmd = &cobra.Command{
@@ -51,8 +53,9 @@ func init() {
 	pf.BoolVar(&flagHistory, "with-history", false, "also back up / restore / clear session history (heavy)")
 	pf.BoolVar(&flagDB, "with-db", false, "also snapshot Copilot databases (backup-only, heavy)")
 	pf.BoolVarP(&flagForce, "force", "y", false, "skip confirmation prompts")
+	pf.BoolVar(&flagJSON, "json", false, "emit machine-readable JSON (list, status, diff, inspect)")
 
-	rootCmd.AddCommand(listCmd, statusCmd, saveCmd, applyCmd, cleanCmd, onCmd, newCmd, rmCmd, diffCmd, tuiCmd)
+	rootCmd.AddCommand(listCmd, statusCmd, saveCmd, applyCmd, cleanCmd, onCmd, newCmd, rmCmd, diffCmd, inspectCmd, tuiCmd)
 }
 
 func newManager() (*profile.Manager, error) {
@@ -61,6 +64,9 @@ func newManager() (*profile.Manager, error) {
 		return nil, err
 	}
 	m.Out = os.Stdout
+	if flagJSON {
+		m.Out = io.Discard
+	}
 	m.DryRun = flagDryRun
 	m.Optional = flagAll
 	m.History = flagHistory

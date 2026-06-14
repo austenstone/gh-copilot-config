@@ -53,6 +53,9 @@ var listCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if flagJSON {
+			return emitJSON(newListJSON(m, ps))
+		}
 		if len(ps) == 0 {
 			fmt.Println("no profiles yet — create one with: copilot-config save <name>")
 			return nil
@@ -83,16 +86,31 @@ var statusCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		fmt.Printf("active profile : %s\n", orNone(m.Active()))
+		active := m.Active()
+		exists := active != "" && m.Exists(active)
+		if flagJSON {
+			out := statusJSON{Active: active, Last: m.Last(), Dir: m.Dir, Exists: exists}
+			if exists {
+				patch, derr := m.Diff(active)
+				if derr == nil {
+					drift := patch != ""
+					inSync := !drift
+					out.Drift = &drift
+					out.InSync = &inSync
+				}
+			}
+			return emitJSON(out)
+		}
+		fmt.Printf("active profile : %s\n", orNone(active))
 		fmt.Printf("last non-clean : %s\n", orNone(m.Last()))
 		fmt.Printf("profiles dir   : %s\n", m.Dir)
-		if a := m.Active(); a != "" && m.Exists(a) {
-			out, err := m.Diff(a)
+		if exists {
+			out, err := m.Diff(active)
 			if err == nil {
 				if out == "" {
-					fmt.Printf("live is in sync with %q\n", a)
+					fmt.Printf("live is in sync with %q\n", active)
 				} else {
-					fmt.Printf("live has drifted from %q (run: copilot-config diff)\n", a)
+					fmt.Printf("live has drifted from %q (run: copilot-config diff)\n", active)
 				}
 			}
 		}
@@ -222,6 +240,9 @@ var diffCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if flagJSON {
+			return emitJSON(diffJSON{Name: name, Drift: out != "", Patch: out})
+		}
 		if out == "" {
 			fmt.Printf("no drift: live matches profile %q\n", name)
 			return nil
@@ -229,6 +250,60 @@ var diffCmd = &cobra.Command{
 		fmt.Printf("drift vs profile %q (- profile, + live):\n%s\n", name, out)
 		return nil
 	},
+}
+
+var inspectCmd = &cobra.Command{
+	Use:     "inspect [name]",
+	Aliases: []string{"show"},
+	Short:   "Inspect a profile's contents, grouped by surface and feature (default: active)",
+	Args:    cobra.MaximumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		m, err := newManager()
+		if err != nil {
+			return err
+		}
+		name := m.Active()
+		if len(args) == 1 {
+			name = args[0]
+		}
+		if name == "" {
+			return fmt.Errorf("no active profile; pass a name")
+		}
+		if !m.Exists(name) {
+			return fmt.Errorf("no such profile %q", name)
+		}
+		inv, err := m.Inspect(name)
+		if err != nil {
+			return err
+		}
+		if flagJSON {
+			return emitJSON(newInspectJSON(name, inv))
+		}
+		printInspect(name, inv)
+		return nil
+	},
+}
+
+func printInspect(name string, inv profile.Inventory) {
+	surfaces := inv.Surfaces()
+	if len(surfaces) == 0 {
+		fmt.Printf("profile %q is empty\n", name)
+		return
+	}
+	fmt.Printf("profile %q:\n", name)
+	for _, s := range surfaces {
+		fmt.Printf("  %s (%d)\n", string(s), inv.SurfaceTotal(s))
+		for _, cat := range profile.Categories {
+			items := inv.Items[s][cat]
+			if len(items) == 0 {
+				continue
+			}
+			fmt.Printf("    %s:\n", cat)
+			for _, it := range items {
+				fmt.Printf("      - %s\n", it.Name)
+			}
+		}
+	}
 }
 
 var tuiCmd = &cobra.Command{
