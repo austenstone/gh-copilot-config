@@ -6,6 +6,13 @@ customizations, with a one-command **clean** toggle for a vanilla workspace.
 
 Written in **pure Go**: one language, one binary, no runtime dependencies.
 
+```bash
+gh extension install austenstone/gh-copilot-config
+```
+
+https://github.com/user-attachments/assets/29bd6e4d-fdc1-450a-b5df-4671ae662485
+
+
 ## Design
 
 Copilot customizations are managed entirely in native Go: file operations,
