@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>Copilot Config</title>
+		<style>
+			:root {
+				color-scheme: dark;
+				--bg: #0d1117;
+				--panel: #161b22;
+				--border: #30363d;
+				--text: #e6edf3;
+				--muted: #8b949e;
+				--accent: #2f81f7;
+				--green: #3fb950;
+				--amber: #d29922;
+				--red: #f85149;
+				--chip: #21262d;
+			}
+			* { box-sizing: border-box; }
+			body {
+				margin: 0;
+				font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+				background: var(--bg);
+				color: var(--text);
+			}
+			header {
+				display: flex;
+				align-items: center;
+				gap: 12px;
+				padding: 10px 14px;
+				border-bottom: 1px solid var(--border);
+				background: var(--panel);
+				position: sticky;
+				top: 0;
+				z-index: 5;
+				flex-wrap: wrap;
+			}
+			header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+			.spacer { flex: 1; }
+			.badge {
+				display: inline-flex;
+				align-items: center;
+				gap: 6px;
+				padding: 3px 9px;
+				border-radius: 999px;
+				background: var(--chip);
+				border: 1px solid var(--border);
+				font-size: 12px;
+				color: var(--muted);
+			}
+			.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+			.dot.green { background: var(--green); }
+			.dot.amber { background: var(--amber); }
+			.dot.red { background: var(--red); }
+			button {
+				font: inherit;
+				color: var(--text);
+				background: var(--chip);
+				border: 1px solid var(--border);
+				border-radius: 6px;
+				padding: 5px 10px;
+				cursor: pointer;
+			}
+			button:hover { border-color: var(--accent); }
+			button:disabled { opacity: 0.5; cursor: default; }
+			button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+			button.danger:hover { border-color: var(--red); color: var(--red); }
+			.layout { display: grid; grid-template-columns: 280px 1fr; min-height: calc(100vh - 49px); }
+			aside { border-right: 1px solid var(--border); background: var(--panel); overflow-y: auto; }
+			.toolbar { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px; border-bottom: 1px solid var(--border); }
+			.toolbar button { flex: 1 1 auto; }
+			.profile {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				padding: 9px 12px;
+				border-bottom: 1px solid var(--border);
+				cursor: pointer;
+			}
+			.profile:hover { background: var(--chip); }
+			.profile.selected { background: #1f2937; box-shadow: inset 3px 0 0 var(--accent); }
+			.profile .name { font-weight: 600; }
+			.profile .meta { color: var(--muted); font-size: 11px; }
+			.pill { font-size: 10px; padding: 1px 6px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+			.pill.active { color: var(--green); border-color: var(--green); }
+			.pill.last { color: var(--accent); border-color: var(--accent); }
+			main { padding: 16px; overflow-y: auto; }
+			.row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+			.row h2 { margin: 0; font-size: 16px; }
+			.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 12px 0; }
+			.tab { padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--chip); cursor: pointer; color: var(--muted); }
+			.tab.active { color: var(--text); border-color: var(--accent); background: #1f2937; }
+			.tab .count { color: var(--muted); font-size: 11px; }
+			.feature { margin-bottom: 14px; }
+			.feature h3 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+			.item { display: flex; flex-direction: column; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px; background: var(--panel); }
+			.item .iname { font-weight: 600; }
+			.item .ipath { color: var(--muted); font-size: 11px; word-break: break-all; }
+			.empty { color: var(--muted); padding: 24px 0; text-align: center; }
+			.error { background: #3c1618; border: 1px solid var(--red); color: #ffdcd7; padding: 8px 12px; border-radius: 6px; margin: 10px 14px; }
+			pre { background: #010409; border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow: auto; max-height: 50vh; font-size: 12px; }
+			code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+			.muted { color: var(--muted); }
+		</style>
+	</head>
+	<body>
+		<header>
+			<h1>⚙️ Copilot Config</h1>
+			<span id="statusBadge" class="badge"><span class="dot"></span><span id="statusText">connecting…</span></span>
+			<span id="dirBadge" class="badge muted" title="config directory"></span>
+			<div class="spacer"></div>
+			<button id="btnRefresh">↻ Refresh</button>
+		</header>
+
+		<div id="errorBar"></div>
+
+		<div class="layout">
+			<aside>
+				<div class="toolbar">
+					<button id="btnNew">＋ New</button>
+					<button id="btnSave">⤓ Save live</button>
+					<button id="btnOn">▶ On (last)</button>
+					<button id="btnClean" class="danger">⌫ Clean</button>
+				</div>
+				<div id="profiles"></div>
+			</aside>
+			<main id="detail">
+				<div class="empty">Select a profile to inspect.</div>
+			</main>
+		</div>
+
+		<script>
+			let state = { list: null, status: null, error: null };
+			let selected = null;
+			let activeTab = null;
+			let inspectCache = null;
+
+			const $ = (id) => document.getElementById(id);
+
+			async function api(path, body) {
+				const res = await fetch(path, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify(body || {}),
+				});
+				const data = await res.json();
+				if (!res.ok || data?.error) throw new Error(data?.error || `HTTP ${res.status}`);
+				return data;
+			}
+
+			function fmtAgo(iso) {
+				if (!iso) return "";
+				const then = new Date(iso).getTime();
+				if (Number.isNaN(then)) return "";
+				const s = Math.floor((Date.now() - then) / 1000);
+				if (s < 60) return s + "s ago";
+				const m = Math.floor(s / 60);
+				if (m < 60) return m + "m ago";
+				const h = Math.floor(m / 60);
+				if (h < 24) return h + "h ago";
+				return Math.floor(h / 24) + "d ago";
+			}
+
+			function renderStatus() {
+				const st = state.status || {};
+				const badge = $("statusBadge");
+				const dot = badge.querySelector(".dot");
+				const text = $("statusText");
+				dot.className = "dot";
+				if (!st.active) {
+					text.textContent = "no active profile";
+				} else if (st.inSync === true) {
+					dot.classList.add("green");
+					text.textContent = `${st.active} · in sync`;
+				} else if (st.drift === true) {
+					dot.classList.add("amber");
+					text.textContent = `${st.active} · drift`;
+				} else {
+					dot.classList.add("green");
+					text.textContent = st.active;
+				}
+				$("dirBadge").textContent = (state.list && state.list.dir) || st.dir || "";
+			}
+
+			function renderError() {
+				const bar = $("errorBar");
+				if (state.error) {
+					bar.innerHTML = `<div class="error">⚠ ${escapeHtml(state.error)}</div>`;
+				} else {
+					bar.innerHTML = "";
+				}
+			}
+
+			function renderProfiles() {
+				const wrap = $("profiles");
+				const profiles = (state.list && state.list.profiles) || [];
+				if (!profiles.length) {
+					wrap.innerHTML = '<div class="empty">No profiles yet.</div>';
+					return;
+				}
+				wrap.innerHTML = profiles
+					.map((p) => {
+						const pills = [];
+						if (p.active) pills.push('<span class="pill active">active</span>');
+						if (p.last) pills.push('<span class="pill last">last</span>');
+						const sel = p.name === selected ? " selected" : "";
+						return `<div class="profile${sel}" data-name="${escapeHtml(p.name)}">
+							<div style="flex:1; min-width:0">
+								<div class="name">${escapeHtml(p.name)} ${pills.join(" ")}</div>
+								<div class="meta">${escapeHtml(p.sizeHuman || "")} · ${escapeHtml(fmtAgo(p.modified))}</div>
+							</div>
+						</div>`;
+					})
+					.join("");
+				wrap.querySelectorAll(".profile").forEach((el) => {
+					el.addEventListener("click", () => select(el.dataset.name));
+				});
+			}
+
+			async function select(name) {
+				selected = name;
+				activeTab = null;
+				inspectCache = null;
+				renderProfiles();
+				renderDetailLoading();
+				try {
+					inspectCache = await api("/api/inspect", { name });
+					renderDetail();
+				} catch (e) {
+					$("detail").innerHTML = `<div class="error">⚠ ${escapeHtml(e.message)}</div>`;
+				}
+			}
+
+			function renderDetailLoading() {
+				$("detail").innerHTML = `<div class="empty">Inspecting <code>${escapeHtml(selected)}</code>…</div>`;
+			}
+
+			function renderDetail() {
+				if (!selected || !inspectCache) {
+					$("detail").innerHTML = '<div class="empty">Select a profile to inspect.</div>';
+					return;
+				}
+				const surfaces = inspectCache.surfaces || [];
+				const isActive = (state.status && state.status.active) === selected;
+				if (!activeTab && surfaces.length) activeTab = surfaces[0].token;
+
+				const tabs = surfaces
+					.map(
+						(s) =>
+							`<div class="tab${s.token === activeTab ? " active" : ""}" data-tab="${escapeHtml(s.token)}">${escapeHtml(s.label)} <span class="count">${s.total}</span></div>`,
+					)
+					.join("");
+
+				const current = surfaces.find((s) => s.token === activeTab);
+				let body = "";
+				if (!surfaces.length) {
+					body = '<div class="empty">This profile is empty (vanilla).</div>';
+				} else if (current) {
+					body = (current.features || [])
+						.map((f) => {
+							const items = (f.items || [])
+								.map(
+									(it) =>
+										`<div class="item"><span class="iname">${escapeHtml(it.name)}</span><span class="ipath">${escapeHtml(it.path)}</span></div>`,
+								)
+								.join("");
+							return `<div class="feature"><h3>${escapeHtml(f.feature)} (${(f.items || []).length})</h3>${items}</div>`;
+						})
+						.join("");
+				}
+
+				$("detail").innerHTML = `
+					<div class="row">
+						<h2>${escapeHtml(selected)}</h2>
+						${isActive ? '<span class="pill active">active</span>' : ""}
+						<div class="spacer" style="flex:1"></div>
+						<button class="primary" id="btnApply">Apply</button>
+						<button id="btnDiff">Diff vs live</button>
+						<button id="btnDiffFull">Full patch</button>
+						<button class="danger" id="btnRm">Delete</button>
+					</div>
+					<div class="tabs">${tabs}</div>
+					<div id="surfaceBody">${body}</div>
+					<div id="diffOut"></div>`;
+
+				$("btnApply").addEventListener("click", () => act("/api/apply", { name: selected }, `Apply "${selected}" to live config?`));
+				$("btnRm").addEventListener("click", () => act("/api/rm", { name: selected }, `Delete profile "${selected}"?`, () => { selected = null; }));
+				$("btnDiff").addEventListener("click", loadDiffSummary);
+				$("btnDiffFull").addEventListener("click", loadDiff);
+				$("detail").querySelectorAll(".tab").forEach((el) => {
+					el.addEventListener("click", () => {
+						activeTab = el.dataset.tab;
+						renderDetail();
+					});
+				});
+			}
+
+			async function loadDiffSummary() {
+				const out = $("diffOut");
+				out.innerHTML = '<div class="muted" style="margin-top:10px">Loading summary…</div>';
+				try {
+					const d = await api("/api/diff-summary", { name: selected });
+					if (!d.drift) {
+						out.innerHTML = '<div class="muted" style="margin-top:10px">✓ No drift — live matches this profile.</div>';
+						return;
+					}
+					const c = d.counts || {};
+					const counts = `<div class="muted" style="margin:6px 0">
+						<span style="color:#3fb950">+${c.added || 0} added</span> ·
+						<span style="color:#d29922">~${c.modified || 0} modified</span> ·
+						<span style="color:#f85149">−${c.removed || 0} removed</span></div>`;
+					const sym = { added: "+", modified: "~", removed: "−" };
+					const col = { added: "#3fb950", modified: "#d29922", removed: "#f85149" };
+					const rows = (d.changes || [])
+						.map((ch) => `<div><span style="display:inline-block;width:1.2em;color:${col[ch.kind] || "#888"}">${sym[ch.kind] || "?"}</span>${escapeHtml(ch.path)}</div>`)
+						.join("");
+					out.innerHTML = `<h3 style="margin-top:14px">Changes vs live</h3>${counts}<div style="font-family:var(--mono,monospace);font-size:12px;line-height:1.6">${rows}</div>`;
+				} catch (e) {
+					out.innerHTML = `<div class="error">⚠ ${escapeHtml(e.message)}</div>`;
+				}
+			}
+
+			async function loadDiff() {
+				const out = $("diffOut");
+				out.innerHTML = '<div class="muted" style="margin-top:10px">Loading diff…</div>';
+				try {
+					const d = await api("/api/diff", { name: selected });
+					if (!d.drift) {
+						out.innerHTML = '<div class="muted" style="margin-top:10px">✓ No drift — live matches this profile.</div>';
+						return;
+					}
+					const note = d.truncated ? '<div class="muted">(truncated)</div>' : "";
+					out.innerHTML = `<h3 style="margin-top:14px">Diff vs live</h3>${note}<pre><code>${escapeHtml(d.patch || "")}</code></pre>`;
+				} catch (e) {
+					out.innerHTML = `<div class="error">⚠ ${escapeHtml(e.message)}</div>`;
+				}
+			}
+
+			async function act(path, body, confirmMsg, after) {
+				if (confirmMsg && !window.confirm(confirmMsg)) return;
+				try {
+					await api(path, body);
+					if (after) after();
+				} catch (e) {
+					flashError(e.message);
+				}
+			}
+
+			function flashError(msg) {
+				state.error = msg;
+				renderError();
+			}
+
+			function wireToolbar() {
+				$("btnRefresh").addEventListener("click", () => api("/api/refresh").catch((e) => flashError(e.message)));
+				$("btnClean").addEventListener("click", () =>
+					act("/api/clean", {}, "Reset live Copilot config to vanilla?"),
+				);
+				$("btnOn").addEventListener("click", () => act("/api/on", {}, "Re-apply the last non-clean profile?"));
+				$("btnNew").addEventListener("click", () => {
+					const name = window.prompt("New profile name:");
+					if (name) act("/api/new", { name }, null);
+				});
+				$("btnSave").addEventListener("click", () => {
+					const name = window.prompt("Save current live config into profile named:");
+					if (name) act("/api/save", { name }, `Snapshot live config into "${name}"?`);
+				});
+			}
+
+			function escapeHtml(s) {
+				return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+			}
+
+			function applyState(next) {
+				state = next || state;
+				renderStatus();
+				renderError();
+				renderProfiles();
+				// keep selection valid
+				const names = ((state.list && state.list.profiles) || []).map((p) => p.name);
+				if (selected && !names.includes(selected)) {
+					selected = null;
+					inspectCache = null;
+					renderDetail();
+				}
+			}
+
+			function connect() {
+				const es = new EventSource("/events");
+				es.onmessage = (ev) => {
+					try {
+						applyState(JSON.parse(ev.data));
+					} catch {}
+				};
+				es.onerror = () => {
+					$("statusText").textContent = "reconnecting…";
+				};
+			}
+
+			wireToolbar();
+			connect();
+		</script>
+	</body>
+</html>
