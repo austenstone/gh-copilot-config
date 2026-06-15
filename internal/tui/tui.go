@@ -1297,7 +1297,7 @@ func (m model) historyView() string {
 	start, end := windowRange(m.histCursor, len(m.snaps), max(1, m.height-7))
 	for i := start; i < end; i++ {
 		s := m.snaps[i]
-		when := fmt.Sprintf("%s  %s", profile.FmtDate(s.Taken), profile.FmtAgo(s.Taken))
+		when := padRight(profile.FmtDate(s.Taken), 7) + " " + padRight(profile.FmtAgo(s.Taken), 13)
 		summary := deltaSummary(m.snapDeltas[i])
 		bar := churnBar(deltaTotal(m.snapDeltas[i]), maxTotal)
 		if i == len(m.snaps)-1 {
@@ -1308,11 +1308,11 @@ func (m model) historyView() string {
 		if l := snapLabel(s); l != "" {
 			label = "  " + subtleStyle.Render(l)
 		}
+		marker, whenStyle := "  ", subtleStyle
 		if i == m.histCursor {
-			b.WriteString("  " + promptStyle.Render("▸ "+when) + label + "  " + bar + "  " + summary + "\n")
-		} else {
-			b.WriteString("    " + subtleStyle.Render(when) + label + "  " + bar + "  " + summary + "\n")
+			marker, whenStyle = promptStyle.Render("▸ "), promptStyle
 		}
+		b.WriteString(marker + whenStyle.Render(when) + "  " + bar + "  " + summary + label + "\n")
 	}
 	b.WriteString("\n" + subtleStyle.Render("  ↑/↓ snapshot · enter diff vs previous · a restore to live · q back"))
 	return b.String()
@@ -1341,6 +1341,15 @@ func (m model) snapDiffView() string {
 
 // churnWidth is the fixed cell width of the per-row churn bar.
 const churnWidth = 8
+
+// padRight pads a plain (un-styled) string to a fixed display width so columns
+// line up. Strings already wider than w are returned unchanged.
+func padRight(s string, w int) string {
+	if n := ansi.StringWidth(s); n < w {
+		return s + strings.Repeat(" ", w-n)
+	}
+	return s
+}
 
 // deltaTotal sums every added, modified, and removed item across a delta.
 func deltaTotal(d profile.Delta) int {
