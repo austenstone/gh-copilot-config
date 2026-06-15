@@ -19,3 +19,4 @@ jobs:
       - uses: cli/gh-extension-precompile@v2
         with:
           go_version_file: go.mod
+          build_script_override: script/build-release.sh
